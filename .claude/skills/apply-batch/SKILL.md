@@ -1,6 +1,6 @@
 ---
 name: apply-batch
-description: Fill in job application forms in Chrome for every job whose tailored CV is ready — upload the PDF, answer from profile.md, then stop before Submit so Grace can review and send it herself.
+description: Fill in job application forms in Chrome for every job whose tailored CV is ready — upload the PDF, answer from profile.md, then stop before Submit so Grace can review and send it.
 argument-hint: "[job id to do only one]"
 ---
 
