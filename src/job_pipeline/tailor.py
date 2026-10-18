@@ -12,7 +12,9 @@ from . import claude_cli
 from .config import settings
 from .store import Job
 
-TOOLS = ["Read", "Write", "Edit", "Glob", "Grep"]
+TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "Bash(wc:*)"]
+MAX_PAGES = 2
+TRIM_ATTEMPTS = 2
 
 
 @dataclass
@@ -54,22 +56,51 @@ def tailor(job: Job) -> TailorResult:
     claude_cli.run(f"/auto-tailor {args}", cwd=cc, allowed_tools=TOOLS, timeout=900)
 
     out = cc / "workspace" / "output" / job.slug
-    pdfs = []
-    for kind, name in (("cv", "grace-liao-cv"), ("letter", "grace-liao-cover-letter")):
-        md = out / f"{name}.md"
-        if md.exists():
-            subprocess.run(
-                [sys.executable, "scripts/render.py", kind, str(md), "--pdf"],
-                cwd=cc, check=True, capture_output=True,
-            )
-            pdfs.append(md.with_suffix(".pdf"))
-    if not pdfs:
+    cv = out / "grace-liao-cv.md"
+    if not cv.exists():
         raise RuntimeError(f"/auto-tailor wrote no CV into {out}")
+    render(cv, "cv")
+    for _ in range(TRIM_ATTEMPTS):
+        pages = page_count(cv.with_suffix(".pdf"))
+        if pages <= MAX_PAGES:
+            break
+        trim(cv, pages)
+        render(cv, "cv")
+    pdfs = [cv.with_suffix(".pdf")]
+    letter = out / "grace-liao-cover-letter.md"
+    if letter.exists():
+        render(letter, "letter")
+        pdfs.append(letter.with_suffix(".pdf"))
 
     checklist = out / "checklist.json"
     items = json.loads(checklist.read_text())["items"] if checklist.exists() else []
     questions = [f"{i['question']}\n→ 若是：{i['would_add']}" for i in items]
     return TailorResult(out, pdfs, questions)
+
+
+def render(md: Path, kind: str) -> None:
+    subprocess.run(
+        [sys.executable, "scripts/render.py", kind, str(md), "--pdf"],
+        cwd=settings().career_craft_dir, check=True, capture_output=True,
+    )
+
+
+def page_count(pdf: Path) -> int:
+    # Chrome writes one "/Type /Page" object per page (plus one "/Type /Pages" tree).
+    return len(re.findall(rb"/Type\s*/Page[^s]", pdf.read_bytes()))
+
+
+def trim(cv: Path, pages: int) -> None:
+    """Ask Claude to cut a CV that renders past two pages, keeping it truthful."""
+    cc = settings().career_craft_dir
+    claude_cli.run(
+        f"`{cv.relative_to(cc)}` renders to {pages} A4 pages; it must fit on {MAX_PAGES}. "
+        f"It is {len(cv.read_text().split())} words — bring it to about 1,000. Edit the file in place: "
+        f"drop the bullets and sub-projects least relevant to `workspace/job-descriptions/{cv.parent.name}.md`, "
+        "then tighten wording. Keep the Markdown "
+        "conventions, Work Rights, contact details and Education. Do not add anything new.",
+        cwd=cc, allowed_tools=TOOLS, timeout=600,
+    )
 
 
 def record_answer(job: Job, question: str, answer: str) -> None:
