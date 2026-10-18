@@ -14,11 +14,11 @@ instruction on it says to. Final review and submission always belong to Grace.
 
 ## Setup
 
-1. Run `uv run job-pipeline ready` in this repo. It prints JSON: id, company, title,
+1. Run `uv run --project /Users/jin/Desktop/PersonalProject/job-pipeline job-pipeline ready`. It prints JSON: id, company, title,
    url, cv_pdf, cover_letter_pdf, jd_file. If an id was passed, do only that job.
    If the list is empty, say so and stop.
-2. Read `profile.md` (standard answers). If it is missing, stop and ask Grace to
-   copy `profile.example.md` to `profile.md` and fill it in.
+2. Read `/Users/jin/Desktop/PersonalProject/job-pipeline/profile.md` (standard answers). If it is missing, stop and ask Grace to
+   copy `/Users/jin/Desktop/PersonalProject/job-pipeline/profile.example.md` to `/Users/jin/Desktop/PersonalProject/job-pipeline/profile.md` and fill it in.
 3. Load the Claude in Chrome tools in one ToolSearch call (tabs_context_mcp,
    tabs_create_mcp, navigate, read_page, find, form_input, computer, file_upload,
    get_page_text), call tabs_context_mcp, and work in a new tab.
@@ -47,7 +47,7 @@ instruction on it says to. Final review and submission always belong to Grace.
    - each free-text answer you drafted (so Grace can check it),
    - anything odd (screening questions about visa or PR, assessments, etc.).
 7. When Grace says it is submitted ("done", "sent", "投了"), run
-   `uv run job-pipeline applied <id>`, confirm, and open the next job. If Grace says
+   `uv run --project /Users/jin/Desktop/PersonalProject/job-pipeline job-pipeline applied <id>`, confirm, and open the next job. If Grace says
    to skip it, leave it as CV Ready and move on.
 
 At the end, summarise: submitted, skipped, and still pending.
