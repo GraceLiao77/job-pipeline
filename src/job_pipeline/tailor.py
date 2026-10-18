@@ -74,13 +74,15 @@ def tailor(job: Job) -> TailorResult:
 
 def record_answer(job: Job, question: str, answer: str) -> None:
     """Append your answer to career-craft's facts.md so future CVs reuse it."""
-    q = question.split("\n→")[0]
+    q, _, suggested = question.partition("\n→ 若是：")
     if answer == "keep":
         line = f"- CONFIRMED: {q} — Yes."
     elif answer == "drop":
         line = f"- REJECTED: {q} — No, do not claim this."
     else:
-        line = f"- CONFIRMED (corrected): {q} — {answer}"
+        line = f"- CONFIRMED (Grace's wording): {q} — {answer}"
+        if suggested:
+            line += f' Use this detail instead of the suggested "{suggested}".'
     facts = settings().career_craft_dir / "workspace" / "facts.md"
     with facts.open("a") as f:
         f.write(f"{line}  _(from {job.company}, {date.today().isoformat()})_\n")

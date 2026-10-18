@@ -15,7 +15,7 @@ from datetime import time
 from zoneinfo import ZoneInfo
 
 from telegram import InlineKeyboardButton as Btn
-from telegram import InlineKeyboardMarkup, Update
+from telegram import ForceReply, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -58,10 +58,13 @@ async def send_checklist(ctx: ContextTypes.DEFAULT_TYPE, items: list[store.Check
     for item in items:
         msg = await ctx.bot.send_message(
             chat,
-            f"❓ {item.question}\n\n<i>点按钮，或直接回复这条消息来更正</i>",
+            f"❓ {item.question}",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(
-                [[Btn("✅ 属实，保留", callback_data=f"ck:{item.id}:keep"), Btn("❌ 删掉", callback_data=f"ck:{item.id}:drop")]]
+                [
+                    [Btn("✅ 属实，保留", callback_data=f"ck:{item.id}:keep"), Btn("❌ 删掉", callback_data=f"ck:{item.id}:drop")],
+                    [Btn("✏️ 属实，但要改写法", callback_data=f"ck:{item.id}:edit")],
+                ]
             ),
         )
         with store.connect() as conn:
@@ -102,15 +105,23 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.message
-    reply_to = msg.reply_to_message
-    if reply_to:
-        with store.connect() as conn:
-            item = store.item_by_message(conn, reply_to.message_id)
-        if item:
-            await on_answer(update, ctx, item, msg.text.strip())
-            return
-
     url_match = URL_RE.search(msg.text)
+
+    # A checklist correction: a reply to the question (or to the ✏️ prompt), or the
+    # next plain message after tapping ✏️.
+    reply_to = msg.reply_to_message
+    item_id = ctx.chat_data.get("edit_prompts", {}).get(reply_to.message_id) if reply_to else None
+    if item_id is None and not reply_to and not url_match:
+        item_id = ctx.chat_data.get("editing_item")
+    with store.connect() as conn:
+        item = store.get_item(conn, item_id) if item_id else None
+        if item is None and reply_to:
+            item = store.item_by_message(conn, reply_to.message_id)
+    if item:
+        ctx.chat_data.pop("editing_item", None)
+        await on_answer(update, ctx, item, msg.text.strip())
+        return
+
     pending_url = ctx.chat_data.pop("pending_url", None)
 
     if url_match and len(msg.text) < 300:
@@ -171,7 +182,17 @@ async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     with store.connect() as conn:
         if kind == "ck":
             item = store.get_item(conn, int(rest[0]))
-            if item and not item.answer:
+            if not item or item.answer:
+                return
+            if rest[1] == "edit":
+                await q.edit_message_reply_markup(None)
+                prompt = await q.message.reply_text(
+                    "✏️ 请写出准确的说法（比如具体做了什么、真实的数字），下一版简历会按你的写：",
+                    reply_markup=ForceReply(input_field_placeholder="准确的说法…"),
+                )
+                ctx.chat_data.setdefault("edit_prompts", {})[prompt.message_id] = item.id
+                ctx.chat_data["editing_item"] = item.id
+            else:
                 await on_answer(update, ctx, item, rest[1])
             return
         job = store.get_job(conn, int(rest[0]))

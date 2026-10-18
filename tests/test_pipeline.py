@@ -41,11 +41,14 @@ def test_all_dropped_means_no_regeneration(env):
     assert regen is False
 
 
-def test_correction_is_recorded_verbatim(env):
+def test_edit_keeps_the_fact_but_replaces_the_suggested_wording(env):
     conn = store.connect()
     job = _job(conn)
-    (a,) = store.add_checklist(conn, job.id, ["Did it cut load time by 30%?"], generation=1)
-    pipeline.answer(conn, a, "about 20%, measured in Lighthouse")
-    assert "CONFIRMED (corrected): Did it cut load time by 30%? — about 20%, measured in Lighthouse" in (
-        env / "workspace" / "facts.md"
-    ).read_text()
+    (a,) = store.add_checklist(
+        conn, job.id, ["Did you review teammates' PRs?\n→ 若是：Led code review for the team."], generation=1
+    )
+    _, regen = pipeline.answer(conn, a, "Yes, about 2 PRs a week at WDCC, not leading it")
+    facts = (env / "workspace" / "facts.md").read_text()
+    assert "CONFIRMED (Grace's wording): Did you review teammates' PRs? — Yes, about 2 PRs a week at WDCC, not leading it" in facts
+    assert 'instead of the suggested "Led code review for the team."' in facts
+    assert regen is True
