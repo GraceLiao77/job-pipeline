@@ -22,7 +22,9 @@ class Settings:
 
     @property
     def criteria_file(self) -> Path:
-        return ROOT / "criteria.md"
+        """Your own criteria.md (git-ignored); falls back to the committed example."""
+        own = ROOT / "criteria.md"
+        return own if own.exists() else ROOT / "criteria.example.md"
 
     @property
     def db_path(self) -> Path:

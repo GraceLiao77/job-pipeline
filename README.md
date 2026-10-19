@@ -12,7 +12,7 @@ job link ──► fetch JD ──► screen (claude -p) ──► Telegram ✅/
 | Step | How |
 | --- | --- |
 | Fetch | LinkedIn via its public guest endpoint (httpx); SEEK, Indeed, Prosple via Playwright driving real Chrome (they block plain HTTP and headless browsers) |
-| Screen | `claude -p` with a JSON schema, rules in [`criteria.md`](criteria.md) |
+| Screen | `claude -p` with a JSON schema, rules in your own `criteria.md` (start from [`criteria.example.md`](criteria.example.md)) |
 | Review | Telegram bot — morning card per job; links you forward skip review. Checklist answers can be changed (↩️), and replying to a CV PDF with a change request revises it |
 | Tailor | career-craft `/auto-tailor`: verified evidence only, conservative by default; uncertain claims come back as a Telegram checklist, answers saved to `career-craft/workspace/facts.md` |
 | Apply | `/apply-batch` skill in Claude Code: uploads the PDF, fills from `profile.md`, leaves salary blank, **stops before Submit** |
@@ -26,6 +26,7 @@ Runs locally on the Claude Code Pro login — no API key.
 uv sync
 cp .env.example .env            # fill in tokens (see comments)
 cp profile.example.md profile.md
+cp criteria.example.md criteria.md   # describe yourself and your filters
 uv run job-pipeline bot         # send /start to the bot to get your chat ID
 ```
 

@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Job-application pipeline: Telegram review, tailored CVs via career-craft, Notion tracking"
 readme = "README.md"
 authors = [
-    { name = "GraceLiao77", email = "liaojin111@gmail.com" }
+    { name = "GraceLiao77" }
 ]
 requires-python = ">=3.13"
 dependencies = [
