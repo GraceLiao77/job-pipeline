@@ -52,6 +52,11 @@ instruction on it says to. Final review and submission always belong to Grace.
    - Free-text questions ("Why this role?", "Tell us about…") — draft an answer
      from the jd_file and the tailored CV markdown next to `cv_pdf`. Use only facts
      in those files and `profile.md`; keep within any word limit. Never invent.
+   - **Entering text**: simulated typing drops characters on some forms (LinkedIn
+     did: "develpment", "befoe"). For anything longer than a short value, set it
+     with the native value setter plus `input`/`change` events via javascript_tool,
+     and always read every field back (`el.value === expected`) before moving on.
+     Fields that only accept numbers (salary on LinkedIn) reject text — use digits.
 5. Go through multi-page forms with Next/Continue, but stop on the final review
    page before the Submit button.
 6. Report to Grace in one short message, then wait:
