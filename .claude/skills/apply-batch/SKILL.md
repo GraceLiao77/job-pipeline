@@ -31,12 +31,24 @@ instruction on it says to. Final review and submission always belong to Grace.
 2. If it leads to an external applicant system (Workday, Greenhouse, Lever,
    SmartRecruiters, JobAdder, etc.), continue there. If it needs a new account,
    stop on that job and tell Grace, who creates accounts themselves.
-3. Upload `cv_pdf` wherever a resume/CV is requested, and `cover_letter_pdf` when a
-   cover letter is requested and one exists. If a cover letter is required but none
-   exists, tell Grace instead of uploading the CV twice.
+3. Upload `cv_pdf` wherever a resume/CV is requested. LinkedIn keeps earlier
+   uploads with the same filename, so copy the PDF to the scratchpad as
+   `Grace-Liao-CV-<Company>.pdf` first and confirm that file is the one selected.
+   **Cover letter**: if the form offers one at all (upload or text box, required or
+   optional), include it. If `cover_letter_pdf` is null, run
+   `uv run --project /Users/jin/Desktop/PersonalProject/job-pipeline job-pipeline cover-letter <id>` (about a minute); it prints
+   JSON with `pdf` and `text`. Upload the PDF (renamed
+   `Grace-Liao-Cover-Letter-<Company>.pdf`) to an upload field, or paste the letter
+   body — from "Dear" to the sign-off, without the address block — into a text box.
 4. Fill every field you can from `profile.md`:
    - Fields whose answer is `ASK` or `TODO` (always expected salary) — leave blank.
    - Yes/no questions with no clear answer in the profile — leave unanswered.
+   - **Work experience entries** (LinkedIn, Workday, etc.): never leave Description
+     or Industry as N/A — many recruiters read the form, not the PDF. Description:
+     3–4 short lines from that role's bullets in the tailored CV markdown, keeping
+     the metrics, in plain text with "• " bullets. Industry: e.g. Education
+     (New Oriental), Technology, Information and Internet (TikTok / ByteDance).
+     Titles, companies and dates stay exactly as on the CV.
    - Free-text questions ("Why this role?", "Tell us about…") — draft an answer
      from the jd_file and the tailored CV markdown next to `cv_pdf`. Use only facts
      in those files and `profile.md`; keep within any word limit. Never invent.

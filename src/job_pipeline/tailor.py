@@ -114,6 +114,29 @@ def revise_cv(job: Job, instruction: str) -> tuple[TailorResult, str, list[dict]
     return TailorResult(out, pdfs, []), out_json["summary"], out_json["facts"]
 
 
+def write_cover_letter(job: Job) -> Path:
+    """Write and render a cover letter for a job whose CV already exists.
+
+    Used when an application form turns out to offer a cover letter even though the
+    JD did not ask for one. The tailored CV is the evidence, so the two agree.
+    """
+    cc = settings().career_craft_dir
+    out = cc / "workspace" / "output" / job.slug
+    letter = out / "grace-liao-cover-letter.md"
+    claude_cli.run(
+        f"Write `{letter.relative_to(cc)}` for the job in `workspace/job-descriptions/{job.slug}.md`. "
+        "Follow step 4 of `.claude/skills/auto-tailor/SKILL.md` (structure, rules, format of existing "
+        "letters in workspace/output/*/grace-liao-cover-letter.md, 250–350 words, today's date). Use only "
+        f"facts in `{(out / 'grace-liao-cv.md').relative_to(cc)}`, workspace/facts.md and "
+        "workspace/output/grace-liao-refined.md. Respect REJECTED entries in facts.md.",
+        cwd=cc, allowed_tools=TOOLS, timeout=600,
+    )
+    if not letter.exists():
+        raise RuntimeError("no cover letter was written")
+    render(letter, "letter")
+    return letter
+
+
 def record_revision_facts(job: Job, facts: list[dict]) -> None:
     if not facts:
         return
