@@ -12,7 +12,7 @@ from . import notion, store
 from .fetch import Page, canonical_url
 from .screen import screen
 from .store import Job
-from .tailor import TailorResult, existing_slugs, make_slug, record_answer, tailor
+from .tailor import TailorResult, existing_slugs, make_slug, record_answer, record_revision_facts, revise_cv, tailor
 
 log = logging.getLogger(__name__)
 
@@ -109,15 +109,34 @@ def generate_cv(conn, job: Job) -> tuple[TailorResult, list[store.ChecklistItem]
 
 
 def answer(conn, item: store.ChecklistItem, value: str) -> tuple[Job, bool]:
-    """Record a checklist answer. Returns (job, regenerate?) — regenerate once every
-    item in this round is answered and at least one answer adds something."""
+    """Record (or change) a checklist answer. Returns (job, regenerate?).
+
+    First answers regenerate once every item in the round is answered and at least
+    one adds something. A *changed* answer regenerates as soon as the round is
+    complete — even keep → drop, because the CV may already contain the claim.
+    facts.md is append-only; the later line overrides the earlier one.
+    """
     job = store.get_job(conn, item.job_id)
+    previous = item.answer
+    if previous == value:
+        return job, False
     store.set_item(conn, item.id, answer=value)
     record_answer(job, item.question, value)
     round_items = store.checklist_for(conn, job.id, item.generation)
     done = all(i.answer for i in round_items)
+    if previous is not None:
+        return job, done
     adds = any(i.answer != "drop" for i in round_items)
     return job, done and adds
+
+
+def revise(conn, job: Job, instruction: str) -> tuple[TailorResult, str]:
+    """Apply your free-text change request to the job's CV. Returns (result, summary)."""
+    result, summary, facts = revise_cv(job, instruction)
+    record_revision_facts(job, facts)
+    if job.notion_page_id:
+        _mirror(notion.upload_cv, job.notion_page_id, result.pdfs, result.output_dir)
+    return result, summary
 
 
 def mark_applied(conn, job: Job) -> Job:

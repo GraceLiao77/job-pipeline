@@ -52,3 +52,48 @@ def test_edit_keeps_the_fact_but_replaces_the_suggested_wording(env):
     assert "CONFIRMED (Grace's wording): Did you review teammates' PRs? — Yes, about 2 PRs a week at WDCC, not leading it" in facts
     assert 'instead of the suggested "Led code review for the team."' in facts
     assert regen is True
+
+
+def test_changing_an_answer_overrides_the_fact_and_regenerates(env):
+    conn = store.connect()
+    job = _job(conn)
+    (a,) = store.add_checklist(conn, job.id, ["Does it stream Claude output?\n→ 若是：Streamed output."], generation=1)
+    pipeline.answer(conn, a, "keep")
+
+    _, regen = pipeline.answer(conn, store.get_item(conn, a.id), "drop")
+
+    assert regen is True  # a changed answer must reach the CV even if it only removes
+    lines = (env / "workspace" / "facts.md").read_text().splitlines()
+    assert lines[-2].startswith("- CONFIRMED: Does it stream Claude output?")
+    assert lines[-1].startswith("- REJECTED: Does it stream Claude output?")  # later entry wins
+    assert store.get_item(conn, a.id).answer == "drop"
+
+
+def test_same_answer_twice_does_nothing(env):
+    conn = store.connect()
+    job = _job(conn)
+    (a,) = store.add_checklist(conn, job.id, ["Q?"], generation=1)
+    pipeline.answer(conn, a, "drop")
+    before = (env / "workspace" / "facts.md").read_text()
+    _, regen = pipeline.answer(conn, store.get_item(conn, a.id), "drop")
+    assert regen is False
+    assert (env / "workspace" / "facts.md").read_text() == before
+
+
+def test_cv_messages_map_back_to_their_job(env):
+    conn = store.connect()
+    job = _job(conn)
+    store.remember_cv_message(conn, 555, job.id)
+    assert store.job_for_cv_message(conn, 555).id == job.id
+    assert store.job_for_cv_message(conn, 999) is None
+
+
+def test_revision_facts_are_recorded(env):
+    from job_pipeline.tailor import record_revision_facts
+
+    job = _job(store.connect())
+    record_revision_facts(job, [
+        {"claim": "Interview Coach streams Claude feedback", "status": "REJECTED", "note": "it does not stream"},
+    ])
+    facts = (env / "workspace" / "facts.md").read_text()
+    assert "- REJECTED: Interview Coach streams Claude feedback — it does not stream" in facts

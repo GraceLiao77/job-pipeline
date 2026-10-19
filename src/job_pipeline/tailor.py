@@ -59,13 +59,7 @@ def tailor(job: Job) -> TailorResult:
     cv = out / "grace-liao-cv.md"
     if not cv.exists():
         raise RuntimeError(f"/auto-tailor wrote no CV into {out}")
-    render(cv, "cv")
-    for _ in range(TRIM_ATTEMPTS):
-        pages = page_count(cv.with_suffix(".pdf"))
-        if pages <= MAX_PAGES:
-            break
-        trim(cv, pages)
-        render(cv, "cv")
+    finish_cv(cv)
     pdfs = [cv.with_suffix(".pdf")]
     letter = out / "grace-liao-cover-letter.md"
     if letter.exists():
@@ -76,6 +70,68 @@ def tailor(job: Job) -> TailorResult:
     items = json.loads(checklist.read_text())["items"] if checklist.exists() else []
     questions = [f"{i['question']}\n→ 若是：{i['would_add']}" for i in items]
     return TailorResult(out, pdfs, questions)
+
+
+REVISE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string", "description": "One sentence in Chinese: what you changed"},
+        "facts": {
+            "type": "array",
+            "description": "Facts about Grace the instruction reveals (e.g. a claim is untrue). Empty for pure wording/emphasis changes.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "claim": {"type": "string"},
+                    "status": {"enum": ["CONFIRMED", "REJECTED"]},
+                    "note": {"type": "string"},
+                },
+                "required": ["claim", "status", "note"],
+            },
+        },
+    },
+    "required": ["summary", "facts"],
+}
+
+
+def revise_cv(job: Job, instruction: str) -> tuple[TailorResult, str, list[dict]]:
+    """Edit an existing tailored CV per Grace's free-text instruction, then re-render."""
+    cc = settings().career_craft_dir
+    out = cc / "workspace" / "output" / job.slug
+    cv = out / "grace-liao-cv.md"
+    prompt = (
+        f"Grace reviewed the tailored CV `{cv.relative_to(cc)}` (for `workspace/job-descriptions/{job.slug}.md`) "
+        f"and asks for this change:\n\n<instruction>\n{instruction}\n</instruction>\n\n"
+        "Edit the file in place. Follow rules/truthfulness.md: you may remove, reorder or reword; you may "
+        "only add content supported by workspace/output/grace-liao-refined.md, workspace/facts.md or "
+        "previously submitted CVs in workspace/output/*/. Remove every mention of anything Grace says is "
+        "untrue (bullets, skills list, profile). Keep the Markdown conventions and stay under 1,100 words. "
+        "If the instruction tells you something about Grace's real experience, return it in `facts`."
+    )
+    out_json = claude_cli.run(prompt, schema=REVISE_SCHEMA, cwd=cc, allowed_tools=TOOLS, timeout=600)
+    finish_cv(cv)
+    pdfs = [cv.with_suffix(".pdf")] + ([p] if (p := out / "grace-liao-cover-letter.pdf").exists() else [])
+    return TailorResult(out, pdfs, []), out_json["summary"], out_json["facts"]
+
+
+def record_revision_facts(job: Job, facts: list[dict]) -> None:
+    if not facts:
+        return
+    path = settings().career_craft_dir / "workspace" / "facts.md"
+    with path.open("a") as f:
+        for fact in facts:
+            f.write(f"- {fact['status']}: {fact['claim']} — {fact['note']}  _(CV revision, {job.company}, {date.today().isoformat()})_\n")
+
+
+def finish_cv(cv: Path) -> None:
+    """Render to PDF, trimming until it fits on MAX_PAGES."""
+    render(cv, "cv")
+    for _ in range(TRIM_ATTEMPTS):
+        pages = page_count(cv.with_suffix(".pdf"))
+        if pages <= MAX_PAGES:
+            return
+        trim(cv, pages)
+        render(cv, "cv")
 
 
 def render(md: Path, kind: str) -> None:

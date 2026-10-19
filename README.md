@@ -13,7 +13,7 @@ job link ──► fetch JD ──► screen (claude -p) ──► Telegram ✅/
 | --- | --- |
 | Fetch | LinkedIn via its public guest endpoint (httpx); SEEK, Indeed, Prosple via Playwright driving real Chrome (they block plain HTTP and headless browsers) |
 | Screen | `claude -p` with a JSON schema, rules in [`criteria.md`](criteria.md) |
-| Review | Telegram bot — morning card per job; links you forward skip review |
+| Review | Telegram bot — morning card per job; links you forward skip review. Checklist answers can be changed (↩️), and replying to a CV PDF with a change request revises it |
 | Tailor | career-craft `/auto-tailor`: verified evidence only, conservative by default; uncertain claims come back as a Telegram checklist, answers saved to `career-craft/workspace/facts.md` |
 | Apply | `/apply-batch` skill in Claude Code: uploads the PDF, fills from `profile.md`, leaves salary blank, **stops before Submit** |
 | Track | Notion database, mirrored from local SQLite (`data/state.db`) |

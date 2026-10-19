@@ -40,6 +40,10 @@ CREATE TABLE IF NOT EXISTS checklist (
     answer TEXT,
     generation INTEGER NOT NULL DEFAULT 1
 );
+CREATE TABLE IF NOT EXISTS cv_messages (
+    message_id INTEGER PRIMARY KEY,
+    job_id INTEGER NOT NULL REFERENCES jobs(id)
+);
 """
 
 
@@ -156,3 +160,14 @@ def set_item(conn: sqlite3.Connection, item_id: int, **values) -> None:
     sets = ", ".join(f"{k} = ?" for k in values)
     conn.execute(f"UPDATE checklist SET {sets} WHERE id = ?", (*values.values(), item_id))
     conn.commit()
+
+
+def remember_cv_message(conn: sqlite3.Connection, message_id: int, job_id: int) -> None:
+    """Remember which job a sent CV belongs to, so replying to it can revise that CV."""
+    conn.execute("INSERT OR REPLACE INTO cv_messages VALUES (?, ?)", (message_id, job_id))
+    conn.commit()
+
+
+def job_for_cv_message(conn: sqlite3.Connection, message_id: int) -> Job | None:
+    row = conn.execute("SELECT job_id FROM cv_messages WHERE message_id = ?", (message_id,)).fetchone()
+    return get_job(conn, row[0]) if row else None

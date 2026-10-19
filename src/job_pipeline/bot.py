@@ -9,6 +9,7 @@ serialised with a lock so two jobs never run Claude at the same time.
 """
 
 import asyncio
+import html
 import logging
 import re
 from datetime import time
@@ -39,10 +40,11 @@ cv_lock = asyncio.Lock()
 
 
 def card_text(job: Job) -> str:
+    e = html.escape
     return (
-        f"<b>{job.title}</b>\n{job.company} · {job.location}\n"
+        f"<b>{e(job.title)}</b>\n{e(job.company)} · {e(job.location)}\n"
         f"{job.seniority} · {job.track} · 匹配度 <b>{job.fit_score}/10</b> · {job.source}\n"
-        f"{job.screen_reason}\n{job.url}"
+        f"{e(job.screen_reason)}\n{e(job.url)}"
     )
 
 
@@ -53,19 +55,35 @@ def review_keyboard(job: Job) -> InlineKeyboardMarkup:
 # ---- checklist + CV delivery ---------------------------------------------------
 
 
+ANSWER_LABELS = {"keep": "✅ 已记为属实", "drop": "❌ 已记为不写"}
+# Typed replies to a question message that mean a button, not a correction.
+TYPED_ANSWERS = {
+    "drop": {"删掉", "删", "删除", "不属实", "不对", "没有", "no", "drop"},
+    "keep": {"保留", "属实", "对", "是", "yes", "keep"},
+}
+
+
+def checklist_keyboard(item_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [Btn("✅ 属实，保留", callback_data=f"ck:{item_id}:keep"), Btn("❌ 删掉", callback_data=f"ck:{item_id}:drop")],
+            [Btn("✏️ 属实，但要改写法", callback_data=f"ck:{item_id}:edit")],
+        ]
+    )
+
+
+def answered_keyboard(item_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[Btn("↩️ 选错了，改答案", callback_data=f"ck:{item_id}:undo")]])
+
+
 async def send_checklist(ctx: ContextTypes.DEFAULT_TYPE, items: list[store.ChecklistItem]) -> None:
     chat = settings().telegram_chat_id
     for item in items:
         msg = await ctx.bot.send_message(
             chat,
-            f"❓ {item.question}",
+            f"❓ {html.escape(item.question)}",
             parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(
-                [
-                    [Btn("✅ 属实，保留", callback_data=f"ck:{item.id}:keep"), Btn("❌ 删掉", callback_data=f"ck:{item.id}:drop")],
-                    [Btn("✏️ 属实，但要改写法", callback_data=f"ck:{item.id}:edit")],
-                ]
-            ),
+            reply_markup=checklist_keyboard(item.id),
         )
         with store.connect() as conn:
             store.set_item(conn, item.id, message_id=msg.message_id)
@@ -82,12 +100,38 @@ async def make_cv(ctx: ContextTypes.DEFAULT_TYPE, job: Job, *, regenerate: bool 
             log.exception("tailor failed")
             await ctx.bot.send_message(chat, f"❗ {job.company} 简历生成失败：{e}")
             return
-    for pdf in result.pdfs:
-        with pdf.open("rb") as fh:
-            await ctx.bot.send_document(chat, fh, filename=f"{job.slug}-{pdf.name}")
+    await send_pdfs(ctx, job, result.pdfs)
     note = f"，另有 {len(items)} 个可选确认项 👇（不回答也能直接投，这是保守版）" if items else ""
-    await ctx.bot.send_message(chat, f"📄 {job.company} 简历已就绪{note}\n在电脑上运行 /apply-batch 去填表。")
+    ready = await ctx.bot.send_message(
+        chat, f"📄 {job.company} 简历已就绪{note}\n想改哪里，直接回复这份 PDF 说就行。\n在电脑上运行 /apply-batch 去填表。"
+    )
+    with store.connect() as conn:
+        store.remember_cv_message(conn, ready.message_id, job.id)
     await send_checklist(ctx, items)
+
+
+async def send_pdfs(ctx: ContextTypes.DEFAULT_TYPE, job: Job, pdfs) -> None:
+    chat = settings().telegram_chat_id
+    for pdf in pdfs:
+        with pdf.open("rb") as fh:
+            sent = await ctx.bot.send_document(chat, fh, filename=f"{job.slug}-{pdf.name}")
+        with store.connect() as conn:
+            store.remember_cv_message(conn, sent.message_id, job.id)
+
+
+async def revise_cv(ctx: ContextTypes.DEFAULT_TYPE, job: Job, instruction: str) -> None:
+    chat = settings().telegram_chat_id
+    await ctx.bot.send_message(chat, f"✍️ 正在按你的意见修改 {job.company} 的简历…")
+    async with cv_lock:
+        try:
+            with store.connect() as conn:
+                result, summary = await asyncio.to_thread(pipeline.revise, conn, job, instruction)
+        except Exception as e:  # noqa: BLE001
+            log.exception("revise failed")
+            await ctx.bot.send_message(chat, f"❗ 修改失败：{e}")
+            return
+    await send_pdfs(ctx, job, result.pdfs)
+    await ctx.bot.send_message(chat, f"✅ 已修改：{summary}\n还要改就继续回复这份 PDF。")
 
 
 # ---- handlers -----------------------------------------------------------------
@@ -117,9 +161,15 @@ async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         item = store.get_item(conn, item_id) if item_id else None
         if item is None and reply_to:
             item = store.item_by_message(conn, reply_to.message_id)
+        cv_job = store.job_for_cv_message(conn, reply_to.message_id) if reply_to and not item else None
     if item:
         ctx.chat_data.pop("editing_item", None)
-        await on_answer(update, ctx, item, msg.text.strip())
+        text = msg.text.strip()
+        typed = next((k for k, words in TYPED_ANSWERS.items() if text.lower() in words), None)
+        await on_answer(update, ctx, item, typed or text)
+        return
+    if cv_job:
+        await revise_cv(ctx, cv_job, msg.text.strip())
         return
 
     pending_url = ctx.chat_data.pop("pending_url", None)
@@ -161,14 +211,25 @@ async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def on_answer(update: Update, ctx: ContextTypes.DEFAULT_TYPE, item: store.ChecklistItem, value: str) -> None:
+    changed = item.answer is not None and item.answer != value
     with store.connect() as conn:
         job, regenerate = pipeline.answer(conn, item, value)
-    label = {"keep": "✅ 已记为属实", "drop": "❌ 已记为不写"}.get(value, f"✏️ 已记录更正：{value}")
+    label = ANSWER_LABELS.get(value, f"✏️ 已记录更正：{html.escape(value)}")
+    if changed:
+        label = f"🔁 已改答案 → {label}"
     if update.callback_query:
-        await update.callback_query.edit_message_reply_markup(None)
-        await update.callback_query.message.reply_text(label)
+        await update.callback_query.edit_message_text(
+            f"❓ {html.escape(item.question)}\n\n<b>{label}</b>", parse_mode="HTML", reply_markup=answered_keyboard(item.id)
+        )
     else:
         await update.message.reply_text(label)
+        if item.message_id:
+            try:
+                await ctx.bot.edit_message_reply_markup(
+                    settings().telegram_chat_id, item.message_id, reply_markup=answered_keyboard(item.id)
+                )
+            except Exception:  # noqa: BLE001 — message too old or unchanged; not important
+                pass
     if regenerate:
         await make_cv(ctx, job, regenerate=True)
 
@@ -182,9 +243,15 @@ async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     with store.connect() as conn:
         if kind == "ck":
             item = store.get_item(conn, int(rest[0]))
-            if not item or item.answer:
+            if not item:
                 return
-            if rest[1] == "edit":
+            if rest[1] == "undo":
+                await q.edit_message_text(
+                    f"❓ {html.escape(item.question)}\n\n<i>当前：{ANSWER_LABELS.get(item.answer, '✏️ ' + html.escape(str(item.answer)))}，重新选：</i>",
+                    parse_mode="HTML",
+                    reply_markup=checklist_keyboard(item.id),
+                )
+            elif rest[1] == "edit":
                 await q.edit_message_reply_markup(None)
                 prompt = await q.message.reply_text(
                     "✏️ 请写出准确的说法（比如具体做了什么、真实的数字），下一版简历会按你的写：",
