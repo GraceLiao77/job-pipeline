@@ -49,17 +49,17 @@ def write_jd(job: Job) -> Path:
     return path
 
 
-def tailor(job: Job) -> TailorResult:
+def tailor(job: Job, cancel=None) -> TailorResult:
     cc = settings().career_craft_dir
     jd = write_jd(job)
     args = f"{jd.relative_to(cc)} {job.slug}" + (" cover-letter" if job.cover_letter_needed else "")
-    claude_cli.run(f"/auto-tailor {args}", cwd=cc, allowed_tools=TOOLS, timeout=900)
+    claude_cli.run(f"/auto-tailor {args}", cwd=cc, allowed_tools=TOOLS, timeout=900, cancel=cancel)
 
     out = cc / "workspace" / "output" / job.slug
     cv = out / "grace-liao-cv.md"
     if not cv.exists():
         raise RuntimeError(f"/auto-tailor wrote no CV into {out}")
-    finish_cv(cv)
+    finish_cv(cv, cancel)
     pdfs = [cv.with_suffix(".pdf")]
     letter = out / "grace-liao-cover-letter.md"
     if letter.exists():
@@ -146,14 +146,14 @@ def record_revision_facts(job: Job, facts: list[dict]) -> None:
             f.write(f"- {fact['status']}: {fact['claim']} — {fact['note']}  _(CV revision, {job.company}, {date.today().isoformat()})_\n")
 
 
-def finish_cv(cv: Path) -> None:
+def finish_cv(cv: Path, cancel=None) -> None:
     """Render to PDF, trimming until it fits on MAX_PAGES."""
     render(cv, "cv")
     for _ in range(TRIM_ATTEMPTS):
         pages = page_count(cv.with_suffix(".pdf"))
         if pages <= MAX_PAGES:
             return
-        trim(cv, pages)
+        trim(cv, pages, cancel)
         render(cv, "cv")
 
 
@@ -169,7 +169,7 @@ def page_count(pdf: Path) -> int:
     return len(re.findall(rb"/Type\s*/Page[^s]", pdf.read_bytes()))
 
 
-def trim(cv: Path, pages: int) -> None:
+def trim(cv: Path, pages: int, cancel=None) -> None:
     """Ask Claude to cut a CV that renders past two pages, keeping it truthful."""
     cc = settings().career_craft_dir
     claude_cli.run(
@@ -178,7 +178,7 @@ def trim(cv: Path, pages: int) -> None:
         f"drop the bullets and sub-projects least relevant to `workspace/job-descriptions/{cv.parent.name}.md`, "
         "then tighten wording. Keep the Markdown "
         "conventions, Work Rights, contact details and Education. Do not add anything new.",
-        cwd=cc, allowed_tools=TOOLS, timeout=600,
+        cwd=cc, allowed_tools=TOOLS, timeout=600, cancel=cancel,
     )
 
 

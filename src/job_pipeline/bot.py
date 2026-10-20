@@ -12,6 +12,7 @@ import asyncio
 import html
 import logging
 import re
+import threading
 from datetime import time
 from zoneinfo import ZoneInfo
 
@@ -28,6 +29,7 @@ from telegram.ext import (
 
 from . import pipeline, store
 from .config import settings
+from .claude_cli import Cancelled
 from .fetch import FetchFailed, fetch, page_from_pasted
 from .store import Job
 
@@ -37,6 +39,12 @@ SKIP_REASONS = {"sen": "Too senior", "stk": "Stack mismatch", "loc": "Location",
 SKIP_LABELS = {"sen": "太 senior", "stk": "技术栈不符", "loc": "地点", "visa": "签证/PR", "oth": "其他"}
 
 cv_lock = asyncio.Lock()
+# job id → flag the ⏹ button sets; checked while queued and while Claude runs.
+cv_cancels: dict[int, threading.Event] = {}
+
+
+def skip_reasons_keyboard(job_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[Btn(label, callback_data=f"sr:{job_id}:{code}")] for code, label in SKIP_LABELS.items()])
 
 
 def card_text(job: Job) -> str:
@@ -91,15 +99,31 @@ async def send_checklist(ctx: ContextTypes.DEFAULT_TYPE, items: list[store.Check
 
 async def make_cv(ctx: ContextTypes.DEFAULT_TYPE, job: Job, *, regenerate: bool = False) -> None:
     chat = settings().telegram_chat_id
-    await ctx.bot.send_message(chat, f"✍️ 正在{'重新' if regenerate else ''}生成 {job.company} 的简历…")
-    async with cv_lock:
-        try:
-            with store.connect() as conn:
-                result, items = await asyncio.to_thread(pipeline.generate_cv, conn, job)
-        except Exception as e:  # noqa: BLE001
-            log.exception("tailor failed")
-            await ctx.bot.send_message(chat, f"❗ {job.company} 简历生成失败：{e}")
-            return
+    cancel = cv_cancels.setdefault(job.id, threading.Event())
+    status = await ctx.bot.send_message(
+        chat,
+        f"✍️ 正在{'重新' if regenerate else ''}生成 {job.company} 的简历…\n觉得不合适可以随时停下：",
+        reply_markup=InlineKeyboardMarkup([[Btn("⏹ 停止，不投了", callback_data=f"st:{job.id}")]]),
+    )
+    try:
+        async with cv_lock:
+            try:
+                with store.connect() as conn:
+                    result, items = await asyncio.to_thread(pipeline.generate_cv, conn, job, cancel)
+            except Cancelled:
+                await status.edit_text(
+                    f"⏹ 已停止，{job.company} 不投了（已记为跳过）。顺手选个原因？",
+                    reply_markup=skip_reasons_keyboard(job.id),
+                )
+                return
+            except Exception as e:  # noqa: BLE001
+                log.exception("tailor failed")
+                await status.edit_reply_markup(None)
+                await ctx.bot.send_message(chat, f"❗ {job.company} 简历生成失败：{e}")
+                return
+    finally:
+        cv_cancels.pop(job.id, None)
+    await status.edit_reply_markup(None)
     await send_pdfs(ctx, job, result.pdfs)
     note = f"，另有 {len(items)} 个可选确认项 👇（不回答也能直接投，这是保守版）" if items else ""
     ready = await ctx.bot.send_message(
@@ -265,14 +289,19 @@ async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         job = store.get_job(conn, int(rest[0]))
         if not job:
             return
-        if kind == "ap":
+        if kind == "st":
+            if event := cv_cancels.get(job.id):
+                event.set()
+            # Mark skipped right away; if generation had just finished, this still wins.
+            pipeline.skip(conn, job, "Other")
+            await q.edit_message_reply_markup(None)
+            await q.message.reply_text("⏹ 正在停止…")
+        elif kind == "ap":
             job = pipeline.approve(conn, job)
             await q.edit_message_reply_markup(None)
             await make_cv(ctx, job)
         elif kind == "sk":
-            await q.edit_message_reply_markup(
-                InlineKeyboardMarkup([[Btn(label, callback_data=f"sr:{job.id}:{code}")] for code, label in SKIP_LABELS.items()])
-            )
+            await q.edit_message_reply_markup(skip_reasons_keyboard(job.id))
         elif kind == "sr":
             pipeline.skip(conn, job, SKIP_REASONS[rest[1]])
             await q.edit_message_reply_markup(None)

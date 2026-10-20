@@ -9,6 +9,7 @@ import re
 from dataclasses import dataclass
 
 from . import notion, store
+from .claude_cli import Cancelled
 from .fetch import Page, canonical_url
 from .screen import screen
 from .store import Job
@@ -96,8 +97,12 @@ def skip(conn, job: Job, reason: str) -> Job:
     return job
 
 
-def generate_cv(conn, job: Job) -> tuple[TailorResult, list[store.ChecklistItem]]:
-    result = tailor(job)
+def generate_cv(conn, job: Job, cancel=None) -> tuple[TailorResult, list[store.ChecklistItem]]:
+    """Tailor, render and record a CV. Raises claude_cli.Cancelled if you press ⏹;
+    the job's status is only changed once the CV is actually done."""
+    if cancel is not None and cancel.is_set():
+        raise Cancelled
+    result = tailor(job, cancel)
     generation = store.latest_generation(conn, job.id) + 1
     items = store.add_checklist(conn, job.id, result.questions, generation)
     job = store.update_job(conn, job.id, status="CV Ready")
