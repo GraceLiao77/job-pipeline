@@ -5,3 +5,6 @@ __pycache__/
 data/
 profile.md
 criteria.md
+
+# Real emails before personal data is removed
+tests/fixtures/raw/

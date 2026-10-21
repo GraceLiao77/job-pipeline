@@ -30,6 +30,10 @@ SELECTORS = {
     "Prosple": "main",
 }
 
+SOURCE_PATH = {
+    'SEEK': r"/job/\d+",
+    'LinkedIn': r"/jobs/view/\d+",
+}
 
 class FetchFailed(Exception):
     pass
@@ -44,6 +48,7 @@ class Page:
 
 
 def detect_source(url: str) -> str:
+    # netloc（域名/主机）host 只有 www.seek.co.nz（再 .lower() 变成小写）
     host = urlparse(url).netloc.lower()
     for needle, name in (("seek.", "SEEK"), ("linkedin.", "LinkedIn"), ("indeed.", "Indeed"), ("prosple.", "Prosple")):
         if needle in host:
