@@ -8,3 +8,7 @@ criteria.md
 
 # Real emails before personal data is removed
 tests/fixtures/raw/
+
+# Google OAuth: client secret and your personal access/refresh token
+credentials.json
+token.json
