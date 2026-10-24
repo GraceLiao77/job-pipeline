@@ -30,3 +30,14 @@ def test_ignores_links_from_unknown_sites():
     html = '''<a href="https://apps.apple.com/app/indeed/id309735670">App Store</a>
               <a href="https://www.seek.co.nz/job/111">Dev</a>'''
     assert extract_job_links(html) == ["https://www.seek.co.nz/job/111"]
+    
+
+def test_resolves_seek_tracking_links():
+    html = '<a href="https://url.s.seek.co.nz/uni/ss/c/abc">Dev</a>'
+    fake_resolve = lambda url: "https://nz.seek.com/job/95417639?ref=alert"
+    assert extract_job_links(html, resolve=fake_resolve) == ["https://www.seek.co.nz/job/95417639"]
+
+
+def test_tracking_link_that_goes_nowhere_is_skipped():
+    html = '<a href="https://url.s.seek.co.nz/uni/ss/c/abc">Unsubscribe</a>'
+    assert extract_job_links(html, resolve=lambda url: None) == []

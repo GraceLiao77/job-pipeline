@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 from . import pipeline, store
 from .fetch import fetch
-from .gmail import ALERT_QUERY, extract_job_links, fetch_message_html, search_alert_ids
+from .gmail import ALERT_QUERY, extract_job_links, fetch_message_html, resolve_redirect, search_alert_ids
 
 log = logging.getLogger(__name__)
 PAUSE_SECONDS = 2
@@ -34,7 +34,7 @@ def ingest_alerts(conn, service, days: int = 1) -> Summary:
             continue
         summary.emails += 1
         failed_before = summary.failed
-        for url in extract_job_links(fetch_message_html(service, msg_id)):
+        for url in extract_job_links(fetch_message_html(service, msg_id), resolve=resolve_redirect):
             summary.links += 1
             if store.find_by_url(conn, url):
                 summary.known += 1

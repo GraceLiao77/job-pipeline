@@ -25,7 +25,10 @@ TOKEN_FILE = ROOT / "token.json"               #  硬盘上的一个文件（Pat
 
 def resolve_redirect(url: str) -> str | None:
     """追踪链接 → 纸条上的真实地址；不是跳转就返回 None。"""
-    response = httpx.head(url, follow_redirects=False, timeout=10)
+    try:
+        response = httpx.head(url, follow_redirects=False, timeout=10)
+    except httpx.HTTPError:  # 断网 / 超时：跳过这个链接，不要让整批任务崩掉
+        return None
     if response.is_redirect:                # 状态码是不是「跳转」？
         return response.headers['location']         # 返回纸条上的地址
     return None
@@ -71,15 +74,25 @@ def fetch_message_html(service, msg_id: str) -> str:
     return extract_html_from_bytes(raw)          # 复用 .eml 的解析逻辑
 
 
-def extract_job_links(html: str) -> list[str]:
+# 追踪跳转的域名：这些链接要先问出「纸条上的真实地址」
+TRACKER_HOSTS = {"url.s.seek.co.nz"}
+
+
+def extract_job_links(html: str, resolve=None) -> list[str]:
+    """resolve：把追踪链接换成真实地址的函数。正式运行传 resolve_redirect，测试传假的。"""
     urls = re.findall(r'href="([^"]+)"', html)
     jobs: list[str] = []
     for url in urls:
-        # 先检检查domain是否是seek，然后检查url是否是job链接
+        # 追踪链接：交给 resolve 换成真实地址；换不到（None）就跳过
+        if resolve and urlparse(url).netloc in TRACKER_HOSTS:
+            url = resolve(url)
+            if not url:
+                continue
+        # 先检查 domain 是哪个网站，再检查 path 是不是职位链接
         pattern = SOURCE_PATH.get(detect_source(url))
-        if pattern and re.search(pattern, urlparse(url).path):  # urlparse(url).path更准确：只在路径里搜索
+        if pattern and re.search(pattern, urlparse(url).path):  # 只在路径里搜索
             jobs.append(canonical_url(url))
-    return list(dict.fromkeys(jobs))  # remove duplicates 并且按照顺序 set 无序去重
+    return list(dict.fromkeys(jobs))  # 保序去重
 
 # Gmail OAuth 登录：向 Google 证明「这个程序可以只读你的邮箱」，拿到一把临时钥匙 Credentials。真正干活的不是这段函数本身，而是它返回的 creds，后面会拿去调 Gmail API
 def get_credentials() -> Credentials:

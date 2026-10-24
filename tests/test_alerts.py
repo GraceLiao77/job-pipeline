@@ -7,7 +7,7 @@ def _fake_gmail(monkeypatch, emails: dict[str, list[str]]):
     monkeypatch.setattr(alerts, "PAUSE_SECONDS", 0)
     monkeypatch.setattr(alerts, "search_alert_ids", lambda service, q: list(emails))
     monkeypatch.setattr(alerts, "fetch_message_html", lambda service, msg_id: msg_id)
-    monkeypatch.setattr(alerts, "extract_job_links", lambda html: emails[html])
+    monkeypatch.setattr(alerts, "extract_job_links", lambda html, resolve=None: emails[html])
 
 
 def _fake_ingest(monkeypatch, calls: list[str], fail: set[str] = frozenset()):
