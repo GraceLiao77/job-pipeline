@@ -2,6 +2,7 @@ import base64
 import email
 import email.policy
 import re
+import httpx
 from html import unescape
 from pathlib import Path
 from urllib.parse import urlparse
@@ -21,6 +22,13 @@ SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]   # 只读，最小�
 CREDENTIALS_FILE = ROOT / "credentials.json"   # 「我是谁」：你的应用（client）
 TOKEN_FILE = ROOT / "token.json"               #  硬盘上的一个文件（Path 对象）读 creds
 # creds 内存里的凭证对象（Credentials），它知道「我过期了没有、还有没有效」
+
+def resolve_redirect(url: str) -> str | None:
+    """追踪链接 → 纸条上的真实地址；不是跳转就返回 None。"""
+    response = httpx.head(url, follow_redirects=False, timeout=10)
+    if response.is_redirect:                # 状态码是不是「跳转」？
+        return response.headers['location']         # 返回纸条上的地址
+    return None
 
 def gmail_service():
     """登录并返回 Gmail 服务台（service），其他函数都用它来调用 API。"""
