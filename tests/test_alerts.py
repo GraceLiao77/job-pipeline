@@ -1,3 +1,5 @@
+import contextlib
+
 from job_pipeline import alerts, store
 from job_pipeline.fetch import FetchFailed, Page
 
@@ -5,6 +7,7 @@ from job_pipeline.fetch import FetchFailed, Page
 def _fake_gmail(monkeypatch, emails: dict[str, list[str]]):
     """emails: message id → job links found in that email."""
     monkeypatch.setattr(alerts, "PAUSE_SECONDS", 0)
+    monkeypatch.setattr(alerts, "chrome_session", contextlib.nullcontext)  # no real browser in tests
     monkeypatch.setattr(alerts, "search_alert_ids", lambda service, q: list(emails))
     monkeypatch.setattr(alerts, "fetch_message_html", lambda service, msg_id: msg_id)
     monkeypatch.setattr(alerts, "extract_job_links", lambda html, resolve=None: emails[html])

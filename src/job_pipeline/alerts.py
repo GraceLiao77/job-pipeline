@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass
 
 from . import pipeline, store
-from .fetch import fetch
+from .fetch import chrome_session, fetch
 from .gmail import ALERT_QUERY, extract_job_links, fetch_message_html, resolve_redirect, search_alert_ids
 
 log = logging.getLogger(__name__)
@@ -28,6 +28,11 @@ class Summary:
 
 
 def ingest_alerts(conn, service, days: int = 1) -> Summary:
+    with chrome_session():  # one Chrome window for the whole batch
+        return _ingest(conn, service, days)
+
+
+def _ingest(conn, service, days: int) -> Summary:
     summary = Summary()
     for msg_id in search_alert_ids(service, f"{ALERT_QUERY} newer_than:{days}d"):
         if store.email_seen(conn, msg_id):

@@ -11,6 +11,7 @@ screening step, which reads text far more reliably than per-site CSS selectors.
 
 import re
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlparse
 
@@ -107,27 +108,66 @@ def _fetch_linkedin(url: str) -> Page:
     return Page(url, "LinkedIn", header, _clean(f"{header}\n\n{body.get_text(chr(10))}"))
 
 
-def _fetch_with_chrome(url: str, source: str) -> Page:
+# One Chrome window shared by a whole batch (see chrome_session). macOS pulls
+# off-screen windows back on screen, so the window is also kept small.
+CHROME_ARGS = [
+    "--disable-blink-features=AutomationControlled",
+    "--window-position=-2400,-2400",
+    "--window-size=480,360",
+]
+_shared_browser = None
+
+
+def _launch_chrome(p):
+    # headless Chrome is stopped by the bot check, so the window has to exist
+    return p.chromium.launch(channel="chrome", headless=False, args=CHROME_ARGS)
+
+
+@contextmanager
+def chrome_session():
+    """Keep one Chrome open for every Chrome fetch inside the `with` block.
+
+    Without it each SEEK/Indeed/Prosple fetch opens and closes its own window,
+    which is slow and pops windows up one after another.
+    """
+    global _shared_browser
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            channel="chrome",
-            headless=False,  # headless Chrome is stopped by the bot check
-            args=["--disable-blink-features=AutomationControlled", "--window-position=-2400,-2400"],
-        )
+        _shared_browser = _launch_chrome(p)
         try:
-            page = browser.new_page(user_agent=UA)
-            page.goto(url, wait_until="domcontentloaded", timeout=45_000)
-            page.wait_for_timeout(6_000)  # let the bot check and client rendering finish
-            title = page.title()
-            if "just a moment" in title.lower() or "blocked" in title.lower():
-                raise FetchFailed(f"{source} 拦截了浏览器")
-            el = page.query_selector(SELECTORS.get(source, "body")) or page.query_selector("body")
-            text = el.inner_text() if el else ""
+            yield
+        finally:
+            _shared_browser.close()
+            _shared_browser = None
+
+
+def _read_page(browser, url: str, source: str) -> Page:
+    page = browser.new_page(user_agent=UA)
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+        page.wait_for_timeout(6_000)  # let the bot check and client rendering finish
+        title = page.title()
+        if "just a moment" in title.lower() or "blocked" in title.lower():
+            raise FetchFailed(f"{source} 拦截了浏览器")
+        el = page.query_selector(SELECTORS.get(source, "body")) or page.query_selector("body")
+        text = el.inner_text() if el else ""
+    finally:
+        page.close()
+    return Page(url, source, title, _clean(f"{title}\n\n{text}"))
+
+
+def _fetch_with_chrome(url: str, source: str) -> Page:
+    if _shared_browser is not None:
+        return _read_page(_shared_browser, url, source)
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = _launch_chrome(p)
+        try:
+            return _read_page(browser, url, source)
         finally:
             browser.close()
-    return Page(url, source, title, _clean(f"{title}\n\n{text}"))
 
 
 def fetch(url: str) -> Page:
