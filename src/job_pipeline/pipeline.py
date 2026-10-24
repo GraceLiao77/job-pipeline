@@ -9,6 +9,7 @@ import re
 from dataclasses import dataclass
 
 from . import notion, store
+from .config import settings
 from .claude_cli import Cancelled
 from .fetch import Page, canonical_url
 from .screen import screen
@@ -59,7 +60,8 @@ def ingest(conn, page: Page, *, manual: bool) -> Ingested:
     if manual:
         status = "Inbox" if s.filtered else "Approved"
     else:
-        status = "Filtered" if s.filtered else "Inbox"
+        # Links you forward are never filtered by score; alert jobs below MIN_FIT are.
+        status = "Filtered" if s.filtered or s.fit_score < settings().min_fit else "Inbox"
 
     job = store.insert_job(
         conn,

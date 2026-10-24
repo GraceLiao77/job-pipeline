@@ -19,6 +19,7 @@ class Settings:
     notion_data_source_id: str
     career_craft_dir: Path
     digest_hour: int
+    min_fit: int  # alert jobs scoring below this are filtered, not sent for review
 
     @property
     def criteria_file(self) -> Path:
@@ -42,4 +43,5 @@ def settings() -> Settings:
         notion_data_source_id=os.environ["NOTION_DATA_SOURCE_ID"],
         career_craft_dir=Path(os.environ["CAREER_CRAFT_DIR"]),
         digest_hour=int(os.getenv("DIGEST_HOUR", "8")),
+        min_fit=int(os.getenv("MIN_FIT", "3")),
     )

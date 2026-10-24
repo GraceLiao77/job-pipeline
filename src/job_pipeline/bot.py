@@ -320,6 +320,52 @@ async def daily_digest(ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await ctx.bot.send_message(chat, f"📌 {len(ready)} 份简历已就绪还没投，记得运行 /apply-batch。")
 
 
+alert_lock = asyncio.Lock()
+
+
+def summary_text(s) -> str:
+    return (
+        f"📬 读了 {s.emails} 封新的 job alert，找到 {s.links} 个职位链接\n"
+        f"新职位 {s.new_jobs} 个：{s.inbox} 个待你审核，{s.filtered} 个被预筛过滤\n"
+        f"已处理过的 {s.known} 个跳过" + (f"，{s.failed} 个抓取/预筛失败" if s.failed else "")
+    )
+
+
+async def check_alerts(ctx: ContextTypes.DEFAULT_TYPE, days: int = 2) -> None:
+    """Read new alert emails and screen their jobs. Cards go out with the 8:00 digest."""
+    from . import alerts
+    from .gmail import gmail_service
+
+    chat = settings().telegram_chat_id
+    if alert_lock.locked():
+        return
+    async with alert_lock:
+        try:
+            with store.connect() as conn:
+                summary = await asyncio.to_thread(lambda: alerts.ingest_alerts(conn, gmail_service(), days))
+        except Exception as e:  # noqa: BLE001
+            log.exception("alert ingestion failed")
+            await ctx.bot.send_message(chat, f"❗ 读取 job alert 失败：{e}")
+            return
+    if summary.emails:
+        await ctx.bot.send_message(chat, summary_text(summary))
+
+
+async def scheduled_check(ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    await check_alerts(ctx)
+    # If the check ran late (Mac was asleep at 7:30), don't wait until tomorrow's digest.
+    from datetime import datetime
+
+    if datetime.now(ZoneInfo("Pacific/Auckland")).hour >= settings().digest_hour:
+        await daily_digest(ctx)
+
+
+async def cmd_check(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text("📬 正在读取 job alert 邮件，每个新职位约 20 秒…")
+    await check_alerts(ctx)
+    await daily_digest(ctx)
+
+
 async def cmd_ready(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     with store.connect() as conn:
         jobs = store.jobs_with_status(conn, "CV Ready")
@@ -338,7 +384,12 @@ def run() -> None:
     else:
         mine = filters.Chat(cfg.telegram_chat_id)
         app.add_handler(CommandHandler("ready", cmd_ready, filters=mine))
+        app.add_handler(CommandHandler("check", cmd_check, filters=mine))
         app.add_handler(MessageHandler(mine & filters.TEXT & ~filters.COMMAND, on_text))
         app.add_handler(CallbackQueryHandler(on_button))
-        app.job_queue.run_daily(daily_digest, time(hour=cfg.digest_hour, tzinfo=ZoneInfo("Pacific/Auckland")))
+        nz = ZoneInfo("Pacific/Auckland")
+        # Run even if the Mac was asleep at the scheduled time (within 6 hours), once.
+        late_ok = {"misfire_grace_time": 6 * 3600, "coalesce": True}
+        app.job_queue.run_daily(scheduled_check, time(hour=cfg.digest_hour - 1, minute=30, tzinfo=nz), job_kwargs=late_ok)
+        app.job_queue.run_daily(daily_digest, time(hour=cfg.digest_hour, tzinfo=nz), job_kwargs=late_ok)
     app.run_polling()

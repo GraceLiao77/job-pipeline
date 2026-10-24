@@ -97,3 +97,27 @@ def test_revision_facts_are_recorded(env):
     ])
     facts = (env / "workspace" / "facts.md").read_text()
     assert "- REJECTED: Interview Coach streams Claude feedback — it does not stream" in facts
+
+
+def _screen(fit: int, filtered: bool = False):
+    from job_pipeline.screen import Screen
+
+    return Screen(company="Acme", title=f"Dev {fit}", location="Auckland", seniority="Intermediate", track="Frontend",
+                  filtered=filtered, fit_score=fit, reason="r", cover_letter_needed=False, is_job_ad=True)
+
+
+def test_low_fit_alert_jobs_are_filtered_but_forwarded_links_are_not(env, monkeypatch):
+    from job_pipeline.fetch import Page
+
+    monkeypatch.setenv("MIN_FIT", "3")
+    conn = store.connect()
+    page = Page("https://www.linkedin.com/jobs/view/1", "LinkedIn", "", "jd")
+
+    monkeypatch.setattr(pipeline, "screen", lambda p: _screen(2))
+    assert pipeline.ingest(conn, page, manual=False).job.status == "Filtered"
+
+    monkeypatch.setattr(pipeline, "screen", lambda p: _screen(3))
+    assert pipeline.ingest(conn, page, manual=False).job.status == "Inbox"
+
+    monkeypatch.setattr(pipeline, "screen", lambda p: _screen(1))
+    assert pipeline.ingest(conn, page, manual=True).job.status == "Approved"  # you chose it yourself

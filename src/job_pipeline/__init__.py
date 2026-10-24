@@ -6,6 +6,7 @@
   job-pipeline cover-letter <id>  write + render a cover letter for a CV-ready job
   job-pipeline fetch <url>    debug: print the text fetched for a job link
   job-pipeline alerts [days]  list job links from job-alert emails in the last N days (default 7)
+  job-pipeline ingest-alerts [days]  screen new alert jobs into the Inbox (the bot does this daily at 7:30)
 """
 
 import json
@@ -87,5 +88,12 @@ def main() -> None:
         print(f"\n{len(ids)} alert emails in the last {days} days → {len(unique)} unique job links")
         for link in unique:
             print(link)
+    elif cmd == "ingest-alerts":
+        from . import alerts, store
+        from .gmail import gmail_service
+
+        days = int(args[0]) if args else 1
+        with store.connect() as conn:
+            print(alerts.ingest_alerts(conn, gmail_service(), days))
     else:
         print(__doc__)

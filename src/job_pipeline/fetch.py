@@ -10,6 +10,7 @@ screening step, which reads text far more reliably than per-site CSS selectors.
 """
 
 import re
+import time
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlparse
 
@@ -85,12 +86,16 @@ def _fetch_linkedin(url: str) -> Page:
     jid = linkedin_job_id(url)
     if not jid:
         raise FetchFailed("找不到 LinkedIn job ID")
-    resp = httpx.get(
-        f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{jid}",
-        headers={"User-Agent": UA},
-        timeout=20,
-        follow_redirects=True,
-    )
+    for wait in (0, 10, 30):  # 429 = too many requests: wait and try again
+        time.sleep(wait)
+        resp = httpx.get(
+            f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{jid}",
+            headers={"User-Agent": UA},
+            timeout=20,
+            follow_redirects=True,
+        )
+        if resp.status_code != 429:
+            break
     if resp.status_code != 200:
         raise FetchFailed(f"LinkedIn 返回 {resp.status_code}")
     soup = BeautifulSoup(resp.text, "html.parser")

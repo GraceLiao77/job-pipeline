@@ -40,6 +40,10 @@ CREATE TABLE IF NOT EXISTS checklist (
     answer TEXT,
     generation INTEGER NOT NULL DEFAULT 1
 );
+CREATE TABLE IF NOT EXISTS seen_emails (
+    message_id TEXT PRIMARY KEY,
+    processed_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS cv_messages (
     message_id INTEGER PRIMARY KEY,
     job_id INTEGER NOT NULL REFERENCES jobs(id)
@@ -171,3 +175,19 @@ def remember_cv_message(conn: sqlite3.Connection, message_id: int, job_id: int) 
 def job_for_cv_message(conn: sqlite3.Connection, message_id: int) -> Job | None:
     row = conn.execute("SELECT job_id FROM cv_messages WHERE message_id = ?", (message_id,)).fetchone()
     return get_job(conn, row[0]) if row else None
+
+
+def email_seen(conn: sqlite3.Connection, message_id: str) -> bool:
+    return conn.execute("SELECT 1 FROM seen_emails WHERE message_id = ?", (message_id,)).fetchone() is not None
+
+
+def mark_email_seen(conn: sqlite3.Connection, message_id: str) -> None:
+    conn.execute(
+        "INSERT OR IGNORE INTO seen_emails VALUES (?, ?)",
+        (message_id, datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+
+
+def find_by_url(conn: sqlite3.Connection, url: str) -> Job | None:
+    return _job(conn.execute("SELECT * FROM jobs WHERE url = ?", (url,)).fetchone())
