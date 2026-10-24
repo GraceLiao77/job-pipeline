@@ -5,7 +5,7 @@
   job-pipeline applied <id>   mark a job applied (Notion + Telegram)
   job-pipeline cover-letter <id>  write + render a cover letter for a CV-ready job
   job-pipeline fetch <url>    debug: print the text fetched for a job link
-  job-pipeline alerts [days]  count job-alert emails from the last N days (default 7)
+  job-pipeline alerts [days]  list job links from job-alert emails in the last N days (default 7)
 """
 
 import json
@@ -73,10 +73,19 @@ def main() -> None:
         print(page.source, page.title, len(page.text), "chars\n")
         print(page.text[:3000])
     elif cmd == "alerts":
-        from .gmail import ALERT_QUERY, gmail_service, search_alert_ids
+        from .gmail import ALERT_QUERY, extract_job_links, fetch_message_html, gmail_service, search_alert_ids
 
         days = args[0] if args else "7"  # 默认查最近 7 天
-        ids = search_alert_ids(gmail_service(), f"{ALERT_QUERY} newer_than:{days}d")
-        print(f"{len(ids)} alert emails in the last {days} days")
+        service = gmail_service()  # 只登录一次，后面所有请求共用
+        ids = search_alert_ids(service, f"{ALERT_QUERY} newer_than:{days}d")
+        links: list[str] = []
+        for msg_id in ids:
+            found = extract_job_links(fetch_message_html(service, msg_id))
+            print(f"  {msg_id}: {len(found)} jobs")
+            links += found
+        unique = list(dict.fromkeys(links))  # 不同邮件里的同一个职位只留一个
+        print(f"\n{len(ids)} alert emails in the last {days} days → {len(unique)} unique job links")
+        for link in unique:
+            print(link)
     else:
         print(__doc__)
