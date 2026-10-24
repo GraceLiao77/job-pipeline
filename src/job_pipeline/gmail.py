@@ -13,20 +13,46 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 
 from .config import ROOT
 
+from googleapiclient.discovery import build
+
+ALERT_QUERY = "from:(jobmail@s.seek.co.nz OR jobalerts-noreply@linkedin.com)"
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]   # 只读，最小权限
 CREDENTIALS_FILE = ROOT / "credentials.json"   # 「我是谁」：你的应用（client）
 TOKEN_FILE = ROOT / "token.json"               #  硬盘上的一个文件（Path 对象）读 creds
 # creds 内存里的凭证对象（Credentials），它知道「我过期了没有、还有没有效」
 
+def gmail_service():
+    """登录并返回 Gmail 服务台（service），其他函数都用它来调用 API。"""
+    return build("gmail", "v1", credentials=get_credentials())
+
+# 读取邮件 从gmail down下来的 .eml文件
 def extract_html_from_eml(path: str) -> str:
     with open(path, 'rb') as f:
-        eml = f.read()
+        return extract_html_from_bytes(f.read())
+    
+# 原始邮件的byte -> 解码成html, .eml文件和Gmail API都走这里
+def extract_html_from_bytes(raw: bytes) -> str:
     # # 第 1 步：把 bytes 解析成一个「邮件对象」
-    msg = email.message_from_bytes(eml, policy=email.policy.default)
+    msg = email.message_from_bytes(raw, policy=email.policy.default)
     # # 第 2 步：从邮件对象中提取 HTML 内容
     html_part = msg.get_body(preferencelist=("html",))
     # # 第 3 步：返回 HTML 内容
     return html_part.get_content() if html_part else ""
+
+# 搜索 处理分页
+def search_alert_ids(service, query: str) -> list[str]:
+    ids: list[str] = []
+    page_token = None
+    while True:
+        resp = service.users().messages().list(
+            userId="me", q=query, pageToken=page_token
+        ).execute()
+        # resp → "messages" 列表 → 每一项是 {"id": ..., "threadId": ...}。我们只要 id
+        ids += [m["id"] for m in resp.get("messages", [])]
+        page_token = resp.get('nextPageToken')  # 有就返回 token，没有（最后一页）就返回 None
+        if not page_token:
+            break
+    return ids
 
 def extract_job_links(html: str) -> list[str]:
     urls = re.findall(r'href="([^"]+)"', html)

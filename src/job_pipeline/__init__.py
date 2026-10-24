@@ -5,11 +5,11 @@
   job-pipeline applied <id>   mark a job applied (Notion + Telegram)
   job-pipeline cover-letter <id>  write + render a cover letter for a CV-ready job
   job-pipeline fetch <url>    debug: print the text fetched for a job link
+  job-pipeline alerts [days]  count job-alert emails from the last N days (default 7)
 """
 
 import json
 import sys
-
 
 def main() -> None:
     cmd, args = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else ("help", [])
@@ -72,5 +72,11 @@ def main() -> None:
         page = fetch(args[0])
         print(page.source, page.title, len(page.text), "chars\n")
         print(page.text[:3000])
+    elif cmd == "alerts":
+        from .gmail import ALERT_QUERY, gmail_service, search_alert_ids
+
+        days = args[0] if args else "7"  # 默认查最近 7 天
+        ids = search_alert_ids(gmail_service(), f"{ALERT_QUERY} newer_than:{days}d")
+        print(f"{len(ids)} alert emails in the last {days} days")
     else:
         print(__doc__)
