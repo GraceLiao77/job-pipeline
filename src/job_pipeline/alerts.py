@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from . import pipeline, store
 from .fetch import chrome_session, fetch
+from .prefilter import quick_reject
 from .gmail import ALERT_QUERY, extract_job_links, fetch_message_html, resolve_redirect, search_alert_ids
 
 log = logging.getLogger(__name__)
@@ -23,7 +24,8 @@ class Summary:
     known: int = 0       # links already in the jobs table
     new_jobs: int = 0    # jobs added (Inbox or Filtered)
     inbox: int = 0       # of those, waiting for your review
-    filtered: int = 0    # of those, dropped by criteria.md
+    filtered: int = 0    # of those, dropped (by the title rules or by criteria.md)
+    prefiltered: int = 0 # of the filtered, dropped by title rules without asking Claude
     failed: int = 0      # links that could not be fetched or screened
 
 
@@ -46,7 +48,14 @@ def _ingest(conn, service, days: int) -> Summary:
                 continue
             time.sleep(PAUSE_SECONDS)  # LinkedIn answers 429 when hit back-to-back
             try:
-                result = pipeline.ingest(conn, fetch(url), manual=False)
+                page = fetch(url)
+                if reason := quick_reject(page.title):  # obvious from the title: don't spend Claude on it
+                    pipeline.record_prefiltered(conn, page, reason)
+                    summary.new_jobs += 1
+                    summary.filtered += 1
+                    summary.prefiltered += 1
+                    continue
+                result = pipeline.ingest(conn, page, manual=False)
             except Exception as e:  # noqa: BLE001 — one bad link must not stop the rest
                 log.warning("alert link failed %s: %s", url, e)
                 summary.failed += 1

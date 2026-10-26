@@ -73,3 +73,20 @@ def test_one_bad_link_does_not_stop_the_rest(env, monkeypatch):
     assert summary.failed == 1
     # Not marked seen, so the failed link is retried next run (job 2 is then skipped as known).
     assert not store.email_seen(conn, "m1")
+
+
+def test_obvious_rejects_never_reach_claude(env, monkeypatch):
+    conn = store.connect()
+    calls: list[str] = []
+    senior = "https://www.linkedin.com/jobs/view/1"
+    _fake_gmail(monkeypatch, {"m1": [senior, "https://www.linkedin.com/jobs/view/2"]})
+    _fake_ingest(monkeypatch, calls)
+    titles = {senior: "Senior Full Stack Engineer | Xero | Auckland"}
+    monkeypatch.setattr(alerts, "fetch", lambda url: Page(url, "LinkedIn", titles.get(url, "Developer | Acme | Auckland"), "jd"))
+
+    summary = alerts.ingest_alerts(conn, service=None, days=1)
+
+    assert calls == ["https://www.linkedin.com/jobs/view/2"]  # only the normal job was screened
+    job = store.find_by_url(conn, senior)
+    assert job.status == "Filtered" and "Senior" in job.screen_reason
+    assert summary.prefiltered == 1 and summary.filtered == 1

@@ -326,7 +326,7 @@ alert_lock = asyncio.Lock()
 def summary_text(s) -> str:
     return (
         f"📬 读了 {s.emails} 封新的 job alert，找到 {s.links} 个职位链接\n"
-        f"新职位 {s.new_jobs} 个：{s.inbox} 个待你审核，{s.filtered} 个被预筛过滤\n"
+        f"新职位 {s.new_jobs} 个：{s.inbox} 个待你审核，{s.filtered} 个被过滤（其中 {s.prefiltered} 个看标题就过滤，没用 Claude）\n"
         f"已处理过的 {s.known} 个跳过" + (f"，{s.failed} 个抓取/预筛失败" if s.failed else "")
     )
 

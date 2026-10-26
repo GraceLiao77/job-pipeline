@@ -84,6 +84,20 @@ def ingest(conn, page: Page, *, manual: bool) -> Ingested:
     return Ingested(job, duplicate=False)
 
 
+def record_prefiltered(conn, page: Page, reason: str) -> Job:
+    """Store a job the title rules rejected, so its URL is skipped next time."""
+    return store.insert_job(
+        conn,
+        url=canonical_url(page.url),
+        source=page.source,
+        title=page.title[:200],
+        jd_text=page.text,
+        job_key=f"prefilter|{canonical_url(page.url)}",
+        status="Filtered",
+        screen_reason=f"规则预过滤：{reason}",
+    )
+
+
 def approve(conn, job: Job) -> Job:
     return store.update_job(conn, job.id, status="Approved")
 
