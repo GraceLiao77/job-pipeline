@@ -9,6 +9,14 @@ import subprocess
 import threading
 from pathlib import Path
 
+# Lean mode (no tools): replace Claude Code's long system prompt and skip every MCP
+# server's tool definitions. Measured on a screening call: ~35k → ~5k tokens.
+LEAN_SYSTEM = (
+    "You are a careful assistant inside a job-application pipeline. Everything you need "
+    "is in the user message. Follow its instructions exactly and reply only with the "
+    "structured result requested."
+)
+
 HEADLESS_NOTE = (
     "You are running non-interactively inside an automation pipeline. Nobody will "
     "read a chat reply, so do not ask questions, do not add English-correction notes "
@@ -59,9 +67,19 @@ def run(
     allowed_tools: list[str] | None = None,
     timeout: int = 600,
     cancel: threading.Event | None = None,
+    system: str | None = None,
 ) -> dict | str:
-    """Return `structured_output` when a schema is given, otherwise the result text."""
-    cmd = ["claude", "-p", prompt, "--output-format", "json", "--append-system-prompt", HEADLESS_NOTE]
+    """Return `structured_output` when a schema is given, otherwise the result text.
+
+    Without `allowed_tools` the call runs lean: one answer, no tools, no MCP, and a
+    short system prompt (`system`, default LEAN_SYSTEM). With tools it is a normal
+    Claude Code agent run.
+    """
+    if allowed_tools:
+        cmd = ["claude", "-p", prompt, "--output-format", "json", "--append-system-prompt", HEADLESS_NOTE]
+    else:
+        cmd = ["claude", "-p", prompt, "--output-format", "json", "--system-prompt", system or LEAN_SYSTEM,
+               "--tools", "", "--strict-mcp-config"]
     if schema:
         cmd += ["--json-schema", json.dumps(schema)]
     if model:
