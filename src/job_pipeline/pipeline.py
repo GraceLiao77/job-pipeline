@@ -149,6 +149,14 @@ def revise(conn, job: Job, instruction: str) -> tuple[TailorResult, str]:
     return result, summary
 
 
+def set_outcome(conn, job: Job, status: str) -> Job:
+    """Interview / Rejected / Offer, from a reply email. Mirrored to the job's Notion row."""
+    job = store.update_job(conn, job.id, status=status)
+    if job.notion_page_id:
+        _mirror(notion.set_status, job.notion_page_id, status)
+    return job
+
+
 def mark_applied(conn, job: Job) -> Job:
     """Record the application, and only now put it in Notion with the PDFs sent."""
     job = store.update_job(conn, job.id, status="Applied")

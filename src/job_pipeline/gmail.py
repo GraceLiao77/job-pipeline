@@ -67,11 +67,15 @@ def search_alert_ids(service, query: str) -> list[str]:
     return ids
 
 # 取一封邮件：ID → 原始邮件 → HTML
+def fetch_message_raw(service, msg_id: str) -> bytes:
+    """凭邮件 ID 取回整封原始邮件（和 .eml 文件内容一样的 bytes）。"""
+    msg = service.users().messages().get(userId="me", id=msg_id, format="raw").execute()
+    return base64.urlsafe_b64decode(msg["raw"])  # base64url 字符串 → 原始邮件 bytes
+
+
 def fetch_message_html(service, msg_id: str) -> str:
     """凭邮件 ID 取回整封邮件，解码成 HTML。"""
-    msg = service.users().messages().get(userId="me", id=msg_id, format="raw").execute()
-    raw = base64.urlsafe_b64decode(msg["raw"])  # base64url 字符串 → 原始邮件 bytes（和 .eml 文件内容一样）
-    return extract_html_from_bytes(raw)          # 复用 .eml 的解析逻辑
+    return extract_html_from_bytes(fetch_message_raw(service, msg_id))  # 复用 .eml 的解析逻辑
 
 
 # 追踪跳转的域名：这些链接要先问出「纸条上的真实地址」

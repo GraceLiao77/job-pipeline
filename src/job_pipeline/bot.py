@@ -366,6 +366,50 @@ async def cmd_check(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await daily_digest(ctx)
 
 
+REPLY_TEMPLATES = {
+    "interview": "🎉 {company} 发来面试邀请！\n{summary}\n（Notion 已改为 Interview）",
+    "action_required": "📝 {company} 需要你行动：\n{summary}",
+    "rejection": "📭 {company}：{summary}\n（Notion 已改为 Rejected）",
+    "offer": "🏆 {company} 发来 offer！\n{summary}",
+}
+reply_lock = asyncio.Lock()
+
+
+async def check_replies(ctx: ContextTypes.DEFAULT_TYPE, days: int = 3, quiet: bool = True) -> None:
+    """Read Gmail for replies to applications and tell you about the ones that matter."""
+    from . import responses
+    from .gmail import gmail_service
+
+    chat = settings().telegram_chat_id
+    if reply_lock.locked():
+        return
+    async with reply_lock:
+        try:
+            with store.connect() as conn:
+                updates = await asyncio.to_thread(lambda: responses.check_responses(conn, gmail_service(), days))
+        except Exception as e:  # noqa: BLE001
+            log.exception("reply check failed")
+            await ctx.bot.send_message(chat, f"❗ 检查回复邮件失败：{e}")
+            return
+    for u in updates:
+        text = REPLY_TEMPLATES[u.kind].format(company=u.job.company, summary=u.summary)
+        await ctx.bot.send_message(chat, f"{text}\n\n✉️ {u.subject}")
+    if not updates and not quiet:
+        await ctx.bot.send_message(chat, "📭 没有新的面试 / 拒信 / 待处理邮件。")
+
+
+async def scheduled_replies(ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    from datetime import datetime
+
+    if 8 <= datetime.now(ZoneInfo("Pacific/Auckland")).hour <= 20:  # daytime only
+        await check_replies(ctx)
+
+
+async def cmd_replies(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text("✉️ 正在检查回复邮件…")
+    await check_replies(ctx, quiet=False)
+
+
 async def cmd_ready(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     with store.connect() as conn:
         jobs = store.jobs_with_status(conn, "CV Ready")
@@ -385,6 +429,7 @@ def run() -> None:
         mine = filters.Chat(cfg.telegram_chat_id)
         app.add_handler(CommandHandler("ready", cmd_ready, filters=mine))
         app.add_handler(CommandHandler("check", cmd_check, filters=mine))
+        app.add_handler(CommandHandler("replies", cmd_replies, filters=mine))
         app.add_handler(MessageHandler(mine & filters.TEXT & ~filters.COMMAND, on_text))
         app.add_handler(CallbackQueryHandler(on_button))
         nz = ZoneInfo("Pacific/Auckland")
@@ -392,4 +437,6 @@ def run() -> None:
         late_ok = {"misfire_grace_time": 6 * 3600, "coalesce": True}
         app.job_queue.run_daily(scheduled_check, time(hour=cfg.digest_hour - 1, minute=30, tzinfo=nz), job_kwargs=late_ok)
         app.job_queue.run_daily(daily_digest, time(hour=cfg.digest_hour, tzinfo=nz), job_kwargs=late_ok)
+        # Replies: every 2 hours, daytime only (checked inside), first run 1 minute after start.
+        app.job_queue.run_repeating(scheduled_replies, interval=2 * 3600, first=60)
     app.run_polling()

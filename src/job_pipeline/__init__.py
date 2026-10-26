@@ -5,6 +5,7 @@
   job-pipeline applied <id>   mark a job applied (Notion + Telegram)
   job-pipeline cover-letter <id>  write + render a cover letter for a CV-ready job
   job-pipeline fetch <url>    debug: print the text fetched for a job link
+  job-pipeline replies [days] [--dry]  check Gmail for interview / rejection / action-required replies
   job-pipeline alerts [days]  list job links from job-alert emails in the last N days (default 7)
   job-pipeline ingest-alerts [days]  screen new alert jobs into the Inbox (the bot does this daily at 7:30)
 """
@@ -82,6 +83,17 @@ def main() -> None:
         print(f"\n{len(ids)} alert emails in the last {days} days → {len(unique)} unique job links")
         for link in unique:
             print(link)
+    elif cmd == "replies":
+        from . import responses, store
+        from .gmail import gmail_service
+
+        dry = "--dry" in args
+        nums = [a for a in args if a.isdigit()]
+        with store.connect() as conn:
+            updates = responses.check_responses(conn, gmail_service(), int(nums[0]) if nums else 3, dry_run=dry)
+        for u in updates:
+            print(f"{u.kind:<16} {u.job.company:<35} {u.summary}  [{u.subject[:50]}]")
+        print(f"{len(updates)} replies needing attention" + (" (dry run: nothing changed)" if dry else ""))
     elif cmd == "ingest-alerts":
         from . import alerts, store
         from .gmail import gmail_service
