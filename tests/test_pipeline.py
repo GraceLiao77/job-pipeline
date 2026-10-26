@@ -121,3 +121,27 @@ def test_low_fit_alert_jobs_are_filtered_but_forwarded_links_are_not(env, monkey
 
     monkeypatch.setattr(pipeline, "screen", lambda p: _screen(1))
     assert pipeline.ingest(conn, page, manual=True).job.status == "Approved"  # you chose it yourself
+
+
+def _fake_notion(monkeypatch):
+    calls = []
+    monkeypatch.setattr(pipeline.notion, "create_job", lambda job, **kw: calls.append(("create", job.status)) or "page-1")
+    monkeypatch.setattr(pipeline.notion, "applied", lambda page_id: calls.append(("applied", page_id)))
+    monkeypatch.setattr(pipeline.notion, "upload_cv", lambda page_id, pdfs, out: calls.append(("upload", page_id)))
+    return calls
+
+
+def test_notion_only_hears_about_applied_jobs(env, monkeypatch):
+    from job_pipeline.fetch import Page
+
+    calls = _fake_notion(monkeypatch)
+    monkeypatch.setattr(pipeline, "screen", lambda p: _screen(5))
+    conn = store.connect()
+    job = pipeline.ingest(conn, Page("https://www.linkedin.com/jobs/view/7", "LinkedIn", "", "jd"), manual=False).job
+    pipeline.skip(conn, job, "Other")
+    pipeline.approve(conn, job)
+    assert calls == []  # inbox, skip and approve stay local
+
+    pipeline.mark_applied(conn, store.get_job(conn, job.id))
+    assert calls[0] == ("create", "Applied")
+    assert store.get_job(conn, job.id).notion_page_id == "page-1"

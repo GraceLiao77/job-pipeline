@@ -52,7 +52,7 @@ def main() -> None:
             pipeline.mark_applied(conn, job)
         print(f"marked #{job.id} {job.company} as Applied")
     elif cmd == "cover-letter" and args:
-        from . import notion, store
+        from . import store
         from .tailor import write_cover_letter
 
         with store.connect() as conn:
@@ -60,12 +60,6 @@ def main() -> None:
         if not job:
             sys.exit(f"no job #{args[0]}")
         letter = write_cover_letter(job)
-        if job.notion_page_id:
-            cv = letter.with_name("grace-liao-cv.pdf")
-            try:
-                notion.upload_cv(job.notion_page_id, [cv, letter.with_suffix(".pdf")], letter.parent)
-            except Exception as e:  # noqa: BLE001
-                print(f"(Notion sync failed: {e})", file=sys.stderr)
         print(json.dumps({"markdown": str(letter), "pdf": str(letter.with_suffix(".pdf")), "text": letter.read_text()}, ensure_ascii=False))
     elif cmd == "fetch" and args:
         from .fetch import fetch

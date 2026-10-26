@@ -1,7 +1,8 @@
 """The job lifecycle, independent of Telegram: ingest → review → tailor → apply.
 
-Every state change goes to SQLite first, then is mirrored to Notion. A Notion
-failure is logged and never blocks the pipeline — the row can be re-synced later.
+All state lives in SQLite. Notion only tracks applications: a row is created
+when you mark a job Applied (with the CV that was sent). Inbox, skipped and
+filtered jobs never reach Notion. A Notion failure is logged, never fatal.
 """
 
 import logging
@@ -80,23 +81,17 @@ def ingest(conn, page: Page, *, manual: bool) -> Ingested:
         cover_letter_needed=int(s.cover_letter_needed),
         slug=make_slug(s.company, s.title, existing_slugs()),
     )
-    if page_id := _mirror(notion.create_job, job):
-        job = store.update_job(conn, job.id, notion_page_id=page_id)
     return Ingested(job, duplicate=False)
 
 
 def approve(conn, job: Job) -> Job:
-    job = store.update_job(conn, job.id, status="Approved")
-    if job.notion_page_id:
-        _mirror(notion.set_status, job.notion_page_id, "Approved")
-    return job
+    return store.update_job(conn, job.id, status="Approved")
 
 
 def skip(conn, job: Job, reason: str) -> Job:
-    job = store.update_job(conn, job.id, status="Skipped")
-    if job.notion_page_id:
-        _mirror(notion.skipped, job.notion_page_id, reason)
-    return job
+    # The reason is kept in the log only; Notion tracks applications, not skips.
+    log.info("skipped %s (%s): %s", job.company, job.title, reason)
+    return store.update_job(conn, job.id, status="Skipped")
 
 
 def generate_cv(conn, job: Job, cancel=None) -> tuple[TailorResult, list[store.ChecklistItem]]:
@@ -107,11 +102,7 @@ def generate_cv(conn, job: Job, cancel=None) -> tuple[TailorResult, list[store.C
     result = tailor(job, cancel)
     generation = store.latest_generation(conn, job.id) + 1
     items = store.add_checklist(conn, job.id, result.questions, generation)
-    job = store.update_job(conn, job.id, status="CV Ready")
-    if job.notion_page_id:
-        _mirror(notion.set_status, job.notion_page_id, "CV Ready")
-        _mirror(notion.upload_cv, job.notion_page_id, result.pdfs, result.output_dir)
-        _mirror(notion.checklist, job.notion_page_id, [i.question.split("\n→")[0] for i in items])
+    store.update_job(conn, job.id, status="CV Ready")
     return result, items
 
 
@@ -141,13 +132,19 @@ def revise(conn, job: Job, instruction: str) -> tuple[TailorResult, str]:
     """Apply your free-text change request to the job's CV. Returns (result, summary)."""
     result, summary, facts = revise_cv(job, instruction)
     record_revision_facts(job, facts)
-    if job.notion_page_id:
-        _mirror(notion.upload_cv, job.notion_page_id, result.pdfs, result.output_dir)
     return result, summary
 
 
 def mark_applied(conn, job: Job) -> Job:
+    """Record the application, and only now put it in Notion with the PDFs sent."""
     job = store.update_job(conn, job.id, status="Applied")
+    if not job.notion_page_id:
+        if page_id := _mirror(notion.create_job, job):
+            job = store.update_job(conn, job.id, notion_page_id=page_id)
     if job.notion_page_id:
         _mirror(notion.applied, job.notion_page_id)
+        out = settings().career_craft_dir / "workspace" / "output" / job.slug
+        pdfs = [p for p in (out / "grace-liao-cv.pdf", out / "grace-liao-cover-letter.pdf") if p.exists()]
+        if pdfs:
+            _mirror(notion.upload_cv, job.notion_page_id, pdfs, out)
     return job
