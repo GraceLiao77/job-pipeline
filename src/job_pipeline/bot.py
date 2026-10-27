@@ -28,7 +28,7 @@ from telegram.ext import (
 )
 
 from . import pipeline, store
-from .config import settings
+from .config import DATA_DIR, settings
 from .claude_cli import Cancelled
 from .fetch import FetchFailed, fetch, page_from_pasted
 from .store import Job
@@ -353,6 +353,7 @@ async def check_alerts(ctx: ContextTypes.DEFAULT_TYPE, days: int = 2) -> None:
 
 async def scheduled_check(ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await check_alerts(ctx)
+    LAST_CHECK_FILE.write_text(_today_nz())  # lets catch_up know today's run happened
     # If the check ran late (Mac was asleep at 7:30), don't wait until tomorrow's digest.
     from datetime import datetime
 
@@ -417,6 +418,35 @@ async def cmd_ready(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("\n".join(lines))
 
 
+LAST_CHECK_FILE = DATA_DIR / "last_alert_check"
+
+
+def _today_nz() -> str:
+    from datetime import datetime
+
+    return datetime.now(ZoneInfo("Pacific/Auckland")).date().isoformat()
+
+
+async def catch_up(ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    from datetime import datetime
+
+    now = datetime.now(ZoneInfo("Pacific/Auckland"))
+    last = LAST_CHECK_FILE.read_text().strip() if LAST_CHECK_FILE.exists() else ""
+    after_check_time = (now.hour, now.minute) >= (settings().digest_hour - 1, 30)
+    if last != _today_nz() and after_check_time and now.hour <= 20:
+        log.info("catching up on today's missed alert check")
+        await scheduled_check(ctx)
+
+
+async def on_error(update: object, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    from telegram.error import NetworkError
+
+    if isinstance(ctx.error, NetworkError):  # Wi-Fi blips / sleep: one line, not a 100-line trace
+        log.warning("network error (will retry): %s", ctx.error)
+    else:
+        log.error("unhandled error", exc_info=ctx.error)
+
+
 def run() -> None:
     logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO)
     logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -439,4 +469,9 @@ def run() -> None:
         app.job_queue.run_daily(daily_digest, time(hour=cfg.digest_hour, tzinfo=nz), job_kwargs=late_ok)
         # Replies: every 2 hours, daytime only (checked inside), first run 1 minute after start.
         app.job_queue.run_repeating(scheduled_replies, interval=2 * 3600, first=60)
-    app.run_polling()
+        # If the bot (re)starts after 7:30, today's run was missed: catch up.
+        app.job_queue.run_once(catch_up, when=30)
+    app.add_error_handler(on_error)
+    # bootstrap_retries=-1: if the network isn't up yet (Mac just woke), keep retrying
+    # instead of exiting — exiting made launchd restart it in a loop all morning.
+    app.run_polling(bootstrap_retries=-1)
