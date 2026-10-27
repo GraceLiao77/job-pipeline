@@ -35,6 +35,7 @@ SELECTORS = {
 SOURCE_PATH = {
     'SEEK': r"/job/\d+",
     'LinkedIn': r"/jobs/view/\d+",
+    'Indeed': r"^/(rc/clk/dl|viewjob)"
 }
 
 class FetchFailed(Exception):

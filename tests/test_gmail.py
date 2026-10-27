@@ -41,3 +41,17 @@ def test_resolves_seek_tracking_links():
 def test_tracking_link_that_goes_nowhere_is_skipped():
     html = '<a href="https://url.s.seek.co.nz/uni/ss/c/abc">Unsubscribe</a>'
     assert extract_job_links(html, resolve=lambda url: None) == []
+
+def test_extracts_indeed_job_links():
+    html = '<a href="https://nz.indeed.com/rc/clk/dl?jk=abc123def4567890&amp;from=ja&amp;tk=FAKE">Dev</a>'
+    assert extract_job_links(html) == ["https://nz.indeed.com/viewjob?jk=abc123def4567890"]
+
+
+def test_ignores_indeed_search_and_legal_links():
+    html = '''<a href="https://nz.indeed.com/jobs?q=react&amp;l=Auckland">More jobs</a>
+              <a href="https://nz.indeed.com/legal?hl=en">Terms</a>'''
+    assert extract_job_links(html) == []
+
+def test_indeed_job_key_found_even_when_not_first():
+    html = '<a href="https://nz.indeed.com/rc/clk/dl?from=ja&amp;jk=abc123def4567890">Dev</a>'
+    assert extract_job_links(html) == ["https://nz.indeed.com/viewjob?jk=abc123def4567890"]

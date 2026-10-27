@@ -17,7 +17,7 @@ from .config import ROOT
 
 from googleapiclient.discovery import build
 
-ALERT_QUERY = "from:(jobmail@s.seek.co.nz OR jobalerts-noreply@linkedin.com)"
+ALERT_QUERY = "from:(jobmail@s.seek.co.nz OR jobalerts-noreply@linkedin.com OR donotreply@jobalert.indeed.com)"
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]   # 只读，最小权限
 CREDENTIALS_FILE = ROOT / "credentials.json"   # 「我是谁」：你的应用（client）
 TOKEN_FILE = ROOT / "token.json"               #  硬盘上的一个文件（Path 对象）读 creds
@@ -87,6 +87,7 @@ def extract_job_links(html: str, resolve=None) -> list[str]:
     urls = re.findall(r'href="([^"]+)"', html)
     jobs: list[str] = []
     for url in urls:
+        url = unescape(url)
         # 追踪链接：交给 resolve 换成真实地址；换不到（None）就跳过
         if resolve and urlparse(url).netloc in TRACKER_HOSTS:
             url = resolve(url)
