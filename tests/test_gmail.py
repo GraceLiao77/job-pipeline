@@ -1,4 +1,41 @@
-from job_pipeline.gmail import extract_job_links
+import json
+from pathlib import Path
+
+from job_pipeline.gmail import extract_html_from_eml, extract_job_links
+
+# 真实的 alert 邮件（已用 scripts/sanitize_alert.py 去掉个人信息）。
+# 网站改了邮件格式时，这几个测试会第一时间失败。
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def test_real_linkedin_alert():
+    html = extract_html_from_eml(FIXTURES / "linkedin_alert.eml")
+    assert extract_job_links(html) == [
+        "https://www.linkedin.com/jobs/view/4398149763",
+        "https://www.linkedin.com/jobs/view/4475539217",
+        "https://www.linkedin.com/jobs/view/4474243193",
+        "https://www.linkedin.com/jobs/view/4483388286",
+    ]
+
+
+def test_real_seek_alert():
+    # 追踪链接 → 真实地址的对照表；redirects.get 本身就是一个「翻译」函数，不用联网
+    redirects = json.loads((FIXTURES / "seek_alert.redirects.json").read_text())
+    html = extract_html_from_eml(FIXTURES / "seek_alert.eml")
+    assert extract_job_links(html, resolve=redirects.get) == [
+        "https://www.seek.co.nz/job/95498918",
+        "https://www.seek.co.nz/job/95417639",
+        "https://www.seek.co.nz/job/95424512",
+        "https://www.seek.co.nz/job/95370935",
+    ]
+
+
+def test_real_indeed_alert():
+    # 22 个太长，检查数量和格式
+    links = extract_job_links(extract_html_from_eml(FIXTURES / "indeed_alert.eml"))
+    assert len(links) == 22
+    assert all(link.startswith("https://nz.indeed.com/viewjob?jk=") for link in links)
+
 
 def test_extracts_seek_job_links():
     html = '<a href="https://www.seek.co.nz/job/95140987?ref=alert">Full Stack Dev</a>'
@@ -55,3 +92,4 @@ def test_ignores_indeed_search_and_legal_links():
 def test_indeed_job_key_found_even_when_not_first():
     html = '<a href="https://nz.indeed.com/rc/clk/dl?from=ja&amp;jk=abc123def4567890">Dev</a>'
     assert extract_job_links(html) == ["https://nz.indeed.com/viewjob?jk=abc123def4567890"]
+
