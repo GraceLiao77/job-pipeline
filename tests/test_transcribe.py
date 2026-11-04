@@ -35,3 +35,29 @@ def test_spoken_keep_or_drop_still_means_the_button():
     assert typed_answer("删掉。") == "drop"
     assert typed_answer("Keep!") == "keep"
     assert typed_answer("我做的是前端部分，不是整个系统。") is None
+
+
+@respx.mock
+def test_the_question_steers_whisper(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_test")
+    route = respx.post(transcribe.URL).mock(return_value=httpx.Response(200, json={"text": "实习时用 Vue 做项目"}))
+    transcribe.transcribe(b"ogg", context="Have you built front-end features with Vue.js?")
+    assert "Have you built front-end features with Vue.js?" in route.calls[0].request.content.decode()
+
+
+def test_tidy_fixes_misheard_words_and_falls_back_to_the_raw_text(monkeypatch):
+    seen = {}
+
+    def fake_run(prompt, **kw):
+        seen["prompt"] = prompt
+        return {"text": "实习的时候我用 Vue 做项目开发。"}
+
+    monkeypatch.setattr(transcribe.claude_cli, "run", fake_run)
+    assert transcribe.tidy("实习的时候我使用B.U进行项目开发。", "Vue.js?") == "实习的时候我用 Vue 做项目开发。"
+    assert "B.U" in seen["prompt"] and "Vue.js?" in seen["prompt"]
+
+    def broken(prompt, **kw):
+        raise transcribe.claude_cli.ClaudeError("not logged in")
+
+    monkeypatch.setattr(transcribe.claude_cli, "run", broken)
+    assert transcribe.tidy("原话", "q") == "原话"

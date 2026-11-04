@@ -212,15 +212,24 @@ async def on_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not item and not cv_job:
         await msg.reply_text("🎙️ 语音只能用来回答 ✏️ 改写法的问题，或者回复简历 PDF 来修改。")
         return
+    context = item.question if item else f"Revise the CV for {cv_job.title} at {cv_job.company}"
     try:
         audio = await (await msg.voice.get_file()).download_as_bytearray()
-        text = await asyncio.to_thread(transcribe.transcribe, bytes(audio))
+        raw = await asyncio.to_thread(transcribe.transcribe, bytes(audio), context)
     except Exception as e:  # noqa: BLE001 — still editing: you can just try again or type
         log.exception("voice transcription failed")
         await msg.reply_text(f"❗ 语音转文字失败：{e}")
         return
+    if typed_answer(raw):  # "删掉" / "保留": nothing to tidy
+        text = raw
+    else:
+        # Not under cv_lock: a CV run can hold it for minutes, and this call is small.
+        text = await asyncio.to_thread(transcribe.tidy, raw, context)
+    log.info("voice reply: %r → %r", raw, text)
     if cv_job:
         await msg.reply_text(f"🎙️ 听到的是：{text}")
+    elif text != raw:
+        await msg.reply_text(f"🎙️ 语音原文：{raw}")
     await apply_reply(update, ctx, item, cv_job, text)
 
 
