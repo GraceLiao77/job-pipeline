@@ -20,6 +20,7 @@ class Settings:
     career_craft_dir: Path
     digest_hour: int
     min_fit: int  # alert jobs scoring below this are filtered, not sent for review
+    groq_api_key: str  # optional: voice replies are transcribed with Whisper on Groq
 
     @property
     def criteria_file(self) -> Path:
@@ -44,4 +45,5 @@ def settings() -> Settings:
         career_craft_dir=Path(os.environ["CAREER_CRAFT_DIR"]),
         digest_hour=int(os.getenv("DIGEST_HOUR", "8")),
         min_fit=int(os.getenv("MIN_FIT", "4")),
+        groq_api_key=os.getenv("GROQ_API_KEY", ""),
     )

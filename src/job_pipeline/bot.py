@@ -2,7 +2,8 @@
 
 - Send it a job link → it fetches, screens and (since you picked it) tailors a CV.
 - Every morning it sends one card per job waiting for review, with ✅ / ❌ buttons.
-- Each checklist question arrives as its own message: tap ✅/❌ or reply to correct it.
+- Each checklist question arrives as its own message: tap ✅/❌ or reply to correct it
+  (typed or as a voice note).
 
 Slow work (Chrome fetch, `claude -p`) runs in a worker thread; CV generation is
 serialised with a lock so two jobs never run Claude at the same time.
@@ -27,7 +28,7 @@ from telegram.ext import (
     filters,
 )
 
-from . import pipeline, store
+from . import pipeline, store, transcribe
 from .config import DATA_DIR, settings
 from .claude_cli import Cancelled
 from .fetch import FetchFailed, fetch, page_from_pasted
@@ -171,29 +172,65 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("👋 把职位链接发给我就行。每天早上会推送待审核的岗位。")
 
 
-async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    msg = update.message
-    url_match = URL_RE.search(msg.text)
+def reply_target(ctx: ContextTypes.DEFAULT_TYPE, msg, *, plain_ok: bool) -> tuple[store.ChecklistItem | None, Job | None]:
+    """What a message answers: a checklist item, a CV to revise, or neither.
 
-    # A checklist correction: a reply to the question (or to the ✏️ prompt), or the
-    # next plain message after tapping ✏️.
+    A checklist correction is a reply to the question (or to the ✏️ prompt), or —
+    when `plain_ok` — the next plain message after tapping ✏️. A reply to a CV
+    message is a revision request.
+    """
     reply_to = msg.reply_to_message
     item_id = ctx.chat_data.get("edit_prompts", {}).get(reply_to.message_id) if reply_to else None
-    if item_id is None and not reply_to and not url_match:
+    if item_id is None and not reply_to and plain_ok:
         item_id = ctx.chat_data.get("editing_item")
     with store.connect() as conn:
         item = store.get_item(conn, item_id) if item_id else None
         if item is None and reply_to:
             item = store.item_by_message(conn, reply_to.message_id)
         cv_job = store.job_for_cv_message(conn, reply_to.message_id) if reply_to and not item else None
+    return item, cv_job
+
+
+def typed_answer(text: str) -> str | None:
+    """'删掉' / 'keep' etc. mean a button; voice adds punctuation, so ignore it."""
+    word = text.strip().strip("。.!！?？,，").lower()
+    return next((k for k, words in TYPED_ANSWERS.items() if word in words), None)
+
+
+async def apply_reply(update: Update, ctx: ContextTypes.DEFAULT_TYPE, item, cv_job, text: str) -> None:
     if item:
         ctx.chat_data.pop("editing_item", None)
-        text = msg.text.strip()
-        typed = next((k for k, words in TYPED_ANSWERS.items() if text.lower() in words), None)
-        await on_answer(update, ctx, item, typed or text)
+        await on_answer(update, ctx, item, typed_answer(text) or text.strip())
+    else:
+        await revise_cv(ctx, cv_job, text.strip())
+
+
+async def on_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """A voice note answers a ✏️ question or revises a CV, just like typing would."""
+    msg = update.message
+    item, cv_job = reply_target(ctx, msg, plain_ok=True)
+    if not item and not cv_job:
+        await msg.reply_text("🎙️ 语音只能用来回答 ✏️ 改写法的问题，或者回复简历 PDF 来修改。")
+        return
+    try:
+        audio = await (await msg.voice.get_file()).download_as_bytearray()
+        text = await asyncio.to_thread(transcribe.transcribe, bytes(audio))
+    except Exception as e:  # noqa: BLE001 — still editing: you can just try again or type
+        log.exception("voice transcription failed")
+        await msg.reply_text(f"❗ 语音转文字失败：{e}")
         return
     if cv_job:
-        await revise_cv(ctx, cv_job, msg.text.strip())
+        await msg.reply_text(f"🎙️ 听到的是：{text}")
+    await apply_reply(update, ctx, item, cv_job, text)
+
+
+async def on_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = update.message
+    url_match = URL_RE.search(msg.text)
+
+    item, cv_job = reply_target(ctx, msg, plain_ok=not url_match)
+    if item or cv_job:
+        await apply_reply(update, ctx, item, cv_job, msg.text)
         return
 
     pending_url = ctx.chat_data.pop("pending_url", None)
@@ -278,7 +315,7 @@ async def on_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             elif rest[1] == "edit":
                 await q.edit_message_reply_markup(None)
                 prompt = await q.message.reply_text(
-                    "✏️ 请写出准确的说法（比如具体做了什么、真实的数字），下一版简历会按你的写：",
+                    "✏️ 请写出准确的说法（比如具体做了什么、真实的数字），打字或发语音都行，下一版简历会按你的写：",
                     reply_markup=ForceReply(input_field_placeholder="准确的说法…"),
                 )
                 ctx.chat_data.setdefault("edit_prompts", {})[prompt.message_id] = item.id
@@ -461,6 +498,7 @@ def run() -> None:
         app.add_handler(CommandHandler("check", cmd_check, filters=mine))
         app.add_handler(CommandHandler("replies", cmd_replies, filters=mine))
         app.add_handler(MessageHandler(mine & filters.TEXT & ~filters.COMMAND, on_text))
+        app.add_handler(MessageHandler(mine & filters.VOICE, on_voice))
         app.add_handler(CallbackQueryHandler(on_button))
         nz = ZoneInfo("Pacific/Auckland")
         # Run even if the Mac was asleep at the scheduled time (within 6 hours), once.
