@@ -109,14 +109,14 @@ def _screen(fit: int, filtered: bool = False):
 def test_low_fit_alert_jobs_are_filtered_but_forwarded_links_are_not(env, monkeypatch):
     from job_pipeline.fetch import Page
 
-    monkeypatch.setenv("MIN_FIT", "3")
+    monkeypatch.delenv("MIN_FIT", raising=False)  # the default: below 4 is filtered
     conn = store.connect()
     page = Page("https://www.linkedin.com/jobs/view/1", "LinkedIn", "", "jd")
 
-    monkeypatch.setattr(pipeline, "screen", lambda p: _screen(2))
+    monkeypatch.setattr(pipeline, "screen", lambda p: _screen(3))
     assert pipeline.ingest(conn, page, manual=False).job.status == "Filtered"
 
-    monkeypatch.setattr(pipeline, "screen", lambda p: _screen(3))
+    monkeypatch.setattr(pipeline, "screen", lambda p: _screen(4))
     assert pipeline.ingest(conn, page, manual=False).job.status == "Inbox"
 
     monkeypatch.setattr(pipeline, "screen", lambda p: _screen(1))
