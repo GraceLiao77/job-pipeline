@@ -3,7 +3,10 @@
 LinkedIn serves a public "guest" endpoint that plain HTTP can read. SEEK, Indeed
 and Prosple sit behind bot checks that block plain HTTP and headless browsers, but
 let a real, visible Chrome through — so those go through Playwright driving the
-installed Chrome, with the window parked off-screen.
+installed Chrome, with the window parked off-screen. Chrome keeps one profile in
+data/chrome-profile, so a passed Cloudflare check (its cookie) carries over to the
+next fetch instead of every link facing a fresh check; `job-pipeline unblock`
+opens that profile on screen to pass a check by hand.
 
 We only pull text here. Working out company, title, seniority etc. is left to the
 screening step, which reads text far more reliably than per-site CSS selectors.
@@ -17,6 +20,8 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
+
+from . import config
 
 UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -40,6 +45,10 @@ SOURCE_PATH = {
 
 class FetchFailed(Exception):
     pass
+
+
+class Blocked(FetchFailed):
+    """The site's bot check (Cloudflare "Just a moment…") never let the page through."""
 
 
 @dataclass
@@ -116,12 +125,24 @@ CHROME_ARGS = [
     "--window-position=-2400,-2400",
     "--window-size=480,360",
 ]
+# A Cloudflare check can pass on its own after a few seconds; give it this long.
+CHALLENGE_WAIT_SECONDS = 20
 _shared_browser = None
 
 
-def _launch_chrome(p):
+def profile_dir():
+    return config.DATA_DIR / "chrome-profile"
+
+
+def _launch_chrome(p, args=CHROME_ARGS):
     # headless Chrome is stopped by the bot check, so the window has to exist
-    return p.chromium.launch(channel="chrome", headless=False, args=CHROME_ARGS)
+    return p.chromium.launch_persistent_context(
+        str(profile_dir()), channel="chrome", headless=False, args=args, user_agent=UA
+    )
+
+
+def _challenged(title: str) -> bool:
+    return any(s in title.lower() for s in ("just a moment", "blocked", "verification required"))
 
 
 @contextmanager
@@ -144,13 +165,17 @@ def chrome_session():
 
 
 def _read_page(browser, url: str, source: str) -> Page:
-    page = browser.new_page(user_agent=UA)
+    page = browser.new_page()
     try:
         page.goto(url, wait_until="domcontentloaded", timeout=45_000)
         page.wait_for_timeout(6_000)  # let the bot check and client rendering finish
+        waited = 6
+        while _challenged(page.title()) and waited < CHALLENGE_WAIT_SECONDS:
+            page.wait_for_timeout(1_000)
+            waited += 1
         title = page.title()
-        if "just a moment" in title.lower() or "blocked" in title.lower():
-            raise FetchFailed(f"{source} 拦截了浏览器")
+        if _challenged(title):
+            raise Blocked(f"{source} 的人机验证拦住了浏览器")
         el = page.query_selector(SELECTORS.get(source, "body")) or page.query_selector("body")
         text = el.inner_text() if el else ""
     finally:
@@ -167,6 +192,19 @@ def _fetch_with_chrome(url: str, source: str) -> Page:
         browser = _launch_chrome(p)
         try:
             return _read_page(browser, url, source)
+        finally:
+            browser.close()
+
+
+def open_profile(url: str) -> None:
+    """Open the fetch profile in a normal window so you can pass a bot check by hand."""
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = _launch_chrome(p, args=["--disable-blink-features=AutomationControlled"])
+        try:
+            browser.new_page().goto(url, wait_until="domcontentloaded", timeout=45_000)
+            input("在打开的 Chrome 里完成人机验证，看到职位内容后回到这里按回车… ")
         finally:
             browser.close()
 

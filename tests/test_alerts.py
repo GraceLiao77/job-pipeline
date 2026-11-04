@@ -90,3 +90,37 @@ def test_obvious_rejects_never_reach_claude(env, monkeypatch):
     job = store.find_by_url(conn, senior)
     assert job.status == "Filtered" and "Senior" in job.screen_reason
     assert summary.prefiltered == 1 and summary.filtered == 1
+
+
+def test_a_link_blocked_twice_is_reported_once_and_not_retried(env, monkeypatch):
+    from job_pipeline.bot import summary_text
+    from job_pipeline.fetch import Blocked
+
+    conn = store.connect()
+    calls: list[str] = []
+    indeed = "https://nz.indeed.com/viewjob?jk=abc"
+    _fake_gmail(monkeypatch, {"m1": [indeed, "https://www.linkedin.com/jobs/view/2"]})
+    _fake_ingest(monkeypatch, calls)
+    fetched: list[str] = []
+
+    def fetch(url):
+        fetched.append(url)
+        if url == indeed:
+            raise Blocked("Indeed 的人机验证拦住了浏览器")
+        return Page(url, "LinkedIn", "", "jd text")
+
+    monkeypatch.setattr(alerts, "fetch", fetch)
+
+    first = alerts.ingest_alerts(conn, service=None, days=1)
+    assert first.failed == 1 and first.blocked == []
+    assert not store.email_seen(conn, "m1")  # one block may be a blip: try again next run
+
+    second = alerts.ingest_alerts(conn, service=None, days=1)
+    assert second.failed == 0 and second.blocked == [indeed]
+    assert store.email_seen(conn, "m1")  # given up on, so the email stops coming back
+    assert indeed in summary_text(second)
+
+    fetched.clear()
+    _fake_gmail(monkeypatch, {"m2": [indeed]})  # the same job in a later alert email
+    third = alerts.ingest_alerts(conn, service=None, days=1)
+    assert fetched == [] and third.known == 1 and third.blocked == []

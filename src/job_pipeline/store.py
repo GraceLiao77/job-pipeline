@@ -40,6 +40,11 @@ CREATE TABLE IF NOT EXISTS checklist (
     answer TEXT,
     generation INTEGER NOT NULL DEFAULT 1
 );
+CREATE TABLE IF NOT EXISTS blocked_links (
+    url TEXT PRIMARY KEY,
+    attempts INTEGER NOT NULL,
+    last_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS seen_emails (
     message_id TEXT PRIMARY KEY,
     processed_at TEXT NOT NULL
@@ -191,3 +196,19 @@ def mark_email_seen(conn: sqlite3.Connection, message_id: str) -> None:
 
 def find_by_url(conn: sqlite3.Connection, url: str) -> Job | None:
     return _job(conn.execute("SELECT * FROM jobs WHERE url = ?", (url,)).fetchone())
+
+
+def block_attempts(conn: sqlite3.Connection, url: str) -> int:
+    row = conn.execute("SELECT attempts FROM blocked_links WHERE url = ?", (url,)).fetchone()
+    return row[0] if row else 0
+
+
+def record_block(conn: sqlite3.Connection, url: str) -> int:
+    """Count one more bot-check block for this link; returns the new total."""
+    conn.execute(
+        "INSERT INTO blocked_links VALUES (?, 1, ?) "
+        "ON CONFLICT(url) DO UPDATE SET attempts = attempts + 1, last_at = excluded.last_at",
+        (url, datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    return block_attempts(conn, url)

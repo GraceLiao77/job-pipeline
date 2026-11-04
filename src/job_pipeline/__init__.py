@@ -5,6 +5,7 @@
   job-pipeline applied <id>   mark a job applied (Notion + Telegram)
   job-pipeline cover-letter <id>  write + render a cover letter for a CV-ready job
   job-pipeline fetch <url>    debug: print the text fetched for a job link
+  job-pipeline unblock [url]  open the fetch Chrome profile on screen to pass a bot check by hand
   job-pipeline replies [days] [--dry]  check Gmail for interview / rejection / action-required replies
   job-pipeline alerts [days]  list job links from job-alert emails in the last N days (default 7)
   job-pipeline ingest-alerts [days]  screen new alert jobs into the Inbox (the bot does this daily at 7:30)
@@ -68,6 +69,10 @@ def main() -> None:
         page = fetch(args[0])
         print(page.source, page.title, len(page.text), "chars\n")
         print(page.text[:3000])
+    elif cmd == "unblock":
+        from .fetch import open_profile
+
+        open_profile(args[0] if args else "https://nz.indeed.com/jobs?q=developer&l=Auckland")
     elif cmd == "alerts":
         from .gmail import ALERT_QUERY, extract_job_links, fetch_message_html, gmail_service, resolve_redirect, search_alert_ids
 

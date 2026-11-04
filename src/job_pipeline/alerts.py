@@ -2,19 +2,22 @@
 
 Each email is processed once (remembered in `seen_emails`), and a link already in
 the jobs table is skipped before fetching, so nothing is fetched or screened twice.
+A link the site's bot check blocks MAX_BLOCKS times is given up on and reported
+once, instead of keeping its email unread and being retried every day.
 """
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from . import pipeline, store
-from .fetch import chrome_session, fetch
+from .fetch import Blocked, chrome_session, fetch
 from .prefilter import quick_reject
 from .gmail import ALERT_QUERY, extract_job_links, fetch_message_html, resolve_redirect, search_alert_ids
 
 log = logging.getLogger(__name__)
 PAUSE_SECONDS = 2
+MAX_BLOCKS = 2
 
 
 @dataclass
@@ -27,6 +30,7 @@ class Summary:
     filtered: int = 0    # of those, dropped (by the title rules or by criteria.md)
     prefiltered: int = 0 # of the filtered, dropped by title rules without asking Claude
     failed: int = 0      # links that could not be fetched or screened
+    blocked: list[str] = field(default_factory=list)  # given up on after MAX_BLOCKS bot checks
 
 
 def ingest_alerts(conn, service, days: int = 1) -> Summary:
@@ -43,8 +47,8 @@ def _ingest(conn, service, days: int) -> Summary:
         failed_before = summary.failed
         for url in extract_job_links(fetch_message_html(service, msg_id), resolve=resolve_redirect):
             summary.links += 1
-            if store.find_by_url(conn, url):
-                summary.known += 1
+            if store.find_by_url(conn, url) or store.block_attempts(conn, url) >= MAX_BLOCKS:
+                summary.known += 1  # a given-up link was already reported
                 continue
             time.sleep(PAUSE_SECONDS)  # LinkedIn answers 429 when hit back-to-back
             try:
@@ -56,6 +60,13 @@ def _ingest(conn, service, days: int) -> Summary:
                     summary.prefiltered += 1
                     continue
                 result = pipeline.ingest(conn, page, manual=False)
+            except Blocked as e:
+                log.warning("alert link blocked %s: %s", url, e)
+                if store.record_block(conn, url) >= MAX_BLOCKS:
+                    summary.blocked.append(url)  # stop retrying; you get the link instead
+                else:
+                    summary.failed += 1
+                continue
             except Exception as e:  # noqa: BLE001 — one bad link must not stop the rest
                 log.warning("alert link failed %s: %s", url, e)
                 summary.failed += 1

@@ -19,3 +19,11 @@ def test_canonical_url_strips_tracking():
     assert canonical_url("https://www.seek.co.nz/job/95140987?type=standout&ref=search#sol") == "https://www.seek.co.nz/job/95140987"
     assert canonical_url("https://nz.indeed.com/viewjob?jk=abc123&from=serp") == "https://nz.indeed.com/viewjob?jk=abc123"
     assert canonical_url("https://www.linkedin.com/jobs/search/?currentJobId=42424242") == "https://www.linkedin.com/jobs/view/42424242"
+
+
+def test_cloudflare_titles_count_as_a_bot_check():
+    from job_pipeline.fetch import _challenged
+
+    assert _challenged("Just a moment...")
+    assert _challenged("Additional Verification Required")
+    assert not _challenged("Frontend Developer - Auckland - Indeed.com")
